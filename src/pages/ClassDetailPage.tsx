@@ -1,16 +1,17 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useData } from '../hooks/useData'
 import {
   addStudent,
   createAssignment,
   getStudents,
-  importStudents,
-  parseStudentCsv,
   reassignMarkerIds,
   removeStudent,
   updateStudent,
 } from '../lib/store'
+import type { Student } from '../lib/types'
+
+type Draft = Record<string, { studentNo: string; name: string }>
 
 export function ClassDetailPage() {
   const { classId = '' } = useParams()
@@ -19,7 +20,6 @@ export function ClassDetailPage() {
   const students = useMemo(() => getStudents(classId), [data, classId])
   const assignments = data.assignments.filter((a) => a.classId === classId)
 
-  const [paste, setPaste] = useState('1,陳大文\n2,李小美\n3,王小明')
   const [title, setTitle] = useState('')
   const [subject, setSubject] = useState('')
   const [dueDate, setDueDate] = useState(new Date().toISOString().slice(0, 10))
@@ -27,6 +27,17 @@ export function ClassDetailPage() {
   const [err, setErr] = useState('')
   const [newNo, setNewNo] = useState('')
   const [newName, setNewName] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<Draft>({})
+
+  useEffect(() => {
+    if (!editing) return
+    const next: Draft = {}
+    for (const s of students) {
+      next[s.id] = { studentNo: s.studentNo, name: s.name }
+    }
+    setDraft(next)
+  }, [editing, students])
 
   function showOk(text: string) {
     setErr('')
@@ -36,24 +47,6 @@ export function ClassDetailPage() {
   function showError(text: string) {
     setMsg('')
     setErr(text)
-  }
-
-  function handleImport() {
-    try {
-      if (!classId) {
-        showError('找不到班別 ID，請返回班別列表重新開啟')
-        return
-      }
-      const rows = parseStudentCsv(paste)
-      if (!rows.length) {
-        showError('找不到有效名單。格式：每行「學號,姓名」，例如：1,陳大文')
-        return
-      }
-      const created = importStudents(classId, rows)
-      showOk(`已匯入 ${created.length} 位學生（最多 50 人，可在下方表格編輯）`)
-    } catch (e) {
-      showError(e instanceof Error ? e.message : '匯入失敗')
-    }
   }
 
   function handleAddStudent(e: FormEvent) {
@@ -66,9 +59,59 @@ export function ClassDetailPage() {
       addStudent(classId, newNo, newName)
       setNewNo('')
       setNewName('')
-      showOk('已新增學生')
+      showOk(`已新增：${newNo.trim()} ${newName.trim()}`)
     } catch (e) {
       showError(e instanceof Error ? e.message : '新增失敗')
+    }
+  }
+
+  function startEdit() {
+    const next: Draft = {}
+    for (const s of students) {
+      next[s.id] = { studentNo: s.studentNo, name: s.name }
+    }
+    setDraft(next)
+    setEditing(true)
+    setMsg('')
+    setErr('')
+  }
+
+  function cancelEdit() {
+    setEditing(false)
+    setDraft({})
+    setErr('')
+  }
+
+  function saveEdit() {
+    try {
+      for (const s of students) {
+        const row = draft[s.id]
+        if (!row) continue
+        const studentNo = row.studentNo.trim()
+        const name = row.name.trim()
+        if (!studentNo || !name) {
+          showError(`Marker #${s.markerId} 的學號或姓名不能留空`)
+          return
+        }
+        if (studentNo !== s.studentNo || name !== s.name) {
+          updateStudent(s.id, { studentNo, name })
+        }
+      }
+      setEditing(false)
+      setDraft({})
+      showOk('已儲存名單修改')
+    } catch (e) {
+      showError(e instanceof Error ? e.message : '儲存失敗')
+    }
+  }
+
+  function handleDelete(s: Student) {
+    if (!confirm(`刪除 ${s.studentNo} ${s.name}？`)) return
+    try {
+      removeStudent(s.id)
+      showOk('已刪除學生')
+    } catch (e) {
+      showError(e instanceof Error ? e.message : '刪除失敗')
     }
   }
 
@@ -76,7 +119,7 @@ export function ClassDetailPage() {
     e.preventDefault()
     try {
       if (!students.length) {
-        showError('請先匯入或新增至少一位學生')
+        showError('請先新增至少一位學生')
         return
       }
       if (!title.trim()) {
@@ -135,43 +178,81 @@ export function ClassDetailPage() {
       <section className="panel p-5">
         <h2 className="text-lg font-bold">匯入學生名單</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          每行：學號,姓名（會依序分配 Marker ID 0、1、2…）。匯入後可在下方表格直接改。
+          填寫學號與姓名後新增；會自動分配 Marker ID（每班最多 50 人）。
         </p>
-        <div className="mt-3 space-y-3">
-          <textarea
-            className="min-h-36 w-full rounded-xl border border-[var(--line)] p-3 font-mono text-sm"
-            value={paste}
-            onChange={(e) => setPaste(e.target.value)}
-            placeholder={'1,陳大文\n2,李小美\n3,王小明'}
-          />
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={handleImport}
-          >
-            匯入 / 覆寫名單
-          </button>
-        </div>
+        <form
+          onSubmit={handleAddStudent}
+          className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto]"
+        >
+          <div className="field">
+            <label htmlFor="student-no">學號</label>
+            <input
+              id="student-no"
+              value={newNo}
+              onChange={(e) => setNewNo(e.target.value)}
+              placeholder="例如 1"
+              autoComplete="off"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="student-name">姓名</label>
+            <input
+              id="student-name"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="例如 陳大文"
+              autoComplete="off"
+            />
+          </div>
+          <div className="flex items-end">
+            <button type="submit" className="btn btn-primary w-full">
+              新增學生
+            </button>
+          </div>
+        </form>
       </section>
 
       <section className="panel overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--line)] px-5 py-3">
-          <div className="font-bold">學生名單（可編輯）</div>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={!students.length}
-            onClick={() => {
-              try {
-                reassignMarkerIds(classId)
-                showOk('已按學號重新分配 Marker ID')
-              } catch (e) {
-                showError(e instanceof Error ? e.message : '重新分配失敗')
-              }
-            }}
-          >
-            重排 Marker ID
-          </button>
+          <div className="font-bold">學生名單{editing ? '（編輯中）' : ''}</div>
+          <div className="flex flex-wrap gap-2">
+            {!editing ? (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  disabled={!students.length}
+                  onClick={startEdit}
+                >
+                  編輯名單
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={!students.length}
+                  onClick={() => {
+                    try {
+                      reassignMarkerIds(classId)
+                      showOk('已按學號重新分配 Marker ID')
+                    } catch (e) {
+                      showError(e instanceof Error ? e.message : '重新分配失敗')
+                    }
+                  }}
+                >
+                  重排 Marker ID
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="btn btn-primary" onClick={saveEdit}>
+                  儲存
+                </button>
+                <button type="button" className="btn btn-ghost" onClick={cancelEdit}>
+                  取消
+                </button>
+              </>
+            )}
+          </div>
         </div>
         <div className="max-h-96 overflow-auto">
           <table className="w-full text-left text-sm">
@@ -180,7 +261,7 @@ export function ClassDetailPage() {
                 <th className="px-3 py-2">Marker</th>
                 <th className="px-3 py-2">學號</th>
                 <th className="px-3 py-2">姓名</th>
-                <th className="px-3 py-2" />
+                {editing && <th className="px-3 py-2" />}
               </tr>
             </thead>
             <tbody>
@@ -188,97 +269,76 @@ export function ClassDetailPage() {
                 <tr key={s.id} className="border-t border-[var(--line)]">
                   <td className="px-3 py-2 font-mono">{s.markerId}</td>
                   <td className="px-3 py-2">
-                    <input
-                      className="w-full min-w-16 rounded-lg border border-[var(--line)] px-2 py-1"
-                      defaultValue={s.studentNo}
-                      onBlur={(e) => {
-                        if (e.target.value.trim() === s.studentNo) return
-                        try {
-                          updateStudent(s.id, { studentNo: e.target.value })
-                          showOk('已更新學號')
-                        } catch (error) {
-                          showError(
-                            error instanceof Error ? error.message : '更新失敗',
-                          )
+                    {editing ? (
+                      <input
+                        className="w-full min-w-16 rounded-lg border border-[var(--line)] px-2 py-1"
+                        value={draft[s.id]?.studentNo ?? s.studentNo}
+                        onChange={(e) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            [s.id]: {
+                              studentNo: e.target.value,
+                              name: prev[s.id]?.name ?? s.name,
+                            },
+                          }))
                         }
-                      }}
-                    />
+                      />
+                    ) : (
+                      s.studentNo
+                    )}
                   </td>
                   <td className="px-3 py-2">
-                    <input
-                      className="w-full min-w-24 rounded-lg border border-[var(--line)] px-2 py-1"
-                      defaultValue={s.name}
-                      onBlur={(e) => {
-                        if (e.target.value.trim() === s.name) return
-                        try {
-                          updateStudent(s.id, { name: e.target.value })
-                          showOk('已更新姓名')
-                        } catch (error) {
-                          showError(
-                            error instanceof Error ? error.message : '更新失敗',
-                          )
+                    {editing ? (
+                      <input
+                        className="w-full min-w-24 rounded-lg border border-[var(--line)] px-2 py-1"
+                        value={draft[s.id]?.name ?? s.name}
+                        onChange={(e) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            [s.id]: {
+                              studentNo: prev[s.id]?.studentNo ?? s.studentNo,
+                              name: e.target.value,
+                            },
+                          }))
                         }
-                      }}
-                    />
+                      />
+                    ) : (
+                      s.name
+                    )}
                   </td>
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      type="button"
-                      className="btn btn-danger"
-                      onClick={() => {
-                        if (!confirm(`刪除 ${s.studentNo} ${s.name}？`)) return
-                        try {
-                          removeStudent(s.id)
-                          showOk('已刪除學生')
-                        } catch (error) {
-                          showError(
-                            error instanceof Error ? error.message : '刪除失敗',
-                          )
-                        }
-                      }}
-                    >
-                      刪除
-                    </button>
-                  </td>
+                  {editing && (
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={() => handleDelete(s)}
+                      >
+                        刪除
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
               {students.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-6 text-[var(--muted)]">
-                    尚未有學生。請先匯入，或在下方逐個新增。
+                  <td
+                    colSpan={editing ? 4 : 3}
+                    className="px-4 py-6 text-[var(--muted)]"
+                  >
+                    尚未有學生。請在上方用學號、姓名新增。
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        <form
-          onSubmit={handleAddStudent}
-          className="grid gap-2 border-t border-[var(--line)] p-4 sm:grid-cols-[1fr_1fr_auto]"
-        >
-          <input
-            className="rounded-xl border border-[var(--line)] px-3 py-2"
-            placeholder="學號"
-            value={newNo}
-            onChange={(e) => setNewNo(e.target.value)}
-          />
-          <input
-            className="rounded-xl border border-[var(--line)] px-3 py-2"
-            placeholder="姓名"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-          />
-          <button type="submit" className="btn btn-secondary">
-            新增一位
-          </button>
-        </form>
       </section>
 
       <section className="panel p-5">
         <h2 className="text-lg font-bold">建立功課並掃描</h2>
         {!students.length && (
           <p className="mt-2 text-sm text-amber-700">
-            請先匯入或新增學生，之後才能建立功課。
+            請先新增學生，之後才能建立功課。
           </p>
         )}
         <form
