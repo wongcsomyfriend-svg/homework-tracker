@@ -7,6 +7,7 @@ export function HistoryPage() {
   const data = useData()
   const [classId, setClassId] = useState(data.classes[0]?.id ?? '')
   const [msg, setMsg] = useState('')
+  const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null)
 
   const assignments = useMemo(
     () => data.assignments.filter((a) => !classId || a.classId === classId),
@@ -26,24 +27,61 @@ export function HistoryPage() {
     [data, classId],
   )
 
+  const missingByStudent = useMemo(() => {
+    const map = new Map<
+      string,
+      { id: string; title: string; subject: string; dueDate: string }[]
+    >()
+    if (!classId) return map
+
+    const classAssignments = data.assignments.filter((a) => a.classId === classId)
+    for (const student of students) {
+      const missing = classAssignments
+        .filter((a) =>
+          data.submissions.some(
+            (s) =>
+              s.assignmentId === a.id &&
+              s.studentId === student.id &&
+              s.status === 'missing',
+          ),
+        )
+        .map((a) => ({
+          id: a.id,
+          title: a.title,
+          subject: a.subject || '一般',
+          dueDate: a.dueDate,
+        }))
+        .sort((a, b) => b.dueDate.localeCompare(a.dueDate))
+      map.set(student.id, missing)
+    }
+    return map
+  }, [data, classId, students])
+
   const ranked = useMemo(() => {
     return [...students]
-      .map((s) => ({ student: s, count: missingCounts.get(s.id) ?? 0 }))
+      .map((s) => ({
+        student: s,
+        count: missingCounts.get(s.id) ?? 0,
+        missingAssignments: missingByStudent.get(s.id) ?? [],
+      }))
       .sort((a, b) => b.count - a.count)
-  }, [students, missingCounts])
+  }, [students, missingCounts, missingByStudent])
 
   return (
     <div className="space-y-5">
       <section className="panel p-5">
         <h1 className="text-2xl font-bold">歷史與統計</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          查看每位學生累計欠交次數，以及各次功課的提交紀錄。
+          查看每位學生累計欠交次數，以及各次功課的提交紀錄。按「欠交 x 次」可展開明細。
         </p>
         <div className="field mt-4 max-w-sm">
           <label>班別</label>
           <select
             value={classId}
-            onChange={(e) => setClassId(e.target.value)}
+            onChange={(e) => {
+              setClassId(e.target.value)
+              setExpandedStudentId(null)
+            }}
           >
             {data.classes.length === 0 && <option value="">未有班別</option>}
             {data.classes.map((c) => (
@@ -65,26 +103,71 @@ export function HistoryPage() {
           學生欠交排行
         </div>
         <ul className="divide-y divide-[var(--line)]">
-          {ranked.map(({ student, count }) => (
-            <li
-              key={student.id}
-              className="flex items-center justify-between px-4 py-3"
-            >
-              <div>
-                <div className="font-semibold">
-                  {student.studentNo} {student.name}
+          {ranked.map(({ student, count, missingAssignments }) => {
+            const open = expandedStudentId === student.id
+            return (
+              <li key={student.id} className="px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">
+                      {student.studentNo} {student.name}
+                    </div>
+                    <div className="text-xs text-[var(--muted)]">
+                      Marker #{student.markerId}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className={`badge ${count ? 'badge-missing' : 'badge-ok'} ${
+                      count ? 'cursor-pointer underline-offset-2 hover:underline' : 'cursor-default'
+                    }`}
+                    disabled={!count}
+                    aria-expanded={open}
+                    onClick={() =>
+                      setExpandedStudentId((prev) =>
+                        prev === student.id ? null : student.id,
+                      )
+                    }
+                  >
+                    欠交 {count} 次{count > 0 ? (open ? ' ▲' : ' ▼') : ''}
+                  </button>
                 </div>
-                <div className="text-xs text-[var(--muted)]">
-                  Marker #{student.markerId}
-                </div>
-              </div>
-              <span
-                className={`badge ${count ? 'badge-missing' : 'badge-ok'}`}
-              >
-                欠交 {count} 次
-              </span>
-            </li>
-          ))}
+
+                {open && (
+                  <div className="mt-3 rounded-xl border border-[var(--line)] bg-[var(--paper)] p-3">
+                    <div className="mb-2 text-sm font-semibold text-red-700">
+                      {student.studentNo} {student.name} 欠交的功課
+                    </div>
+                    {missingAssignments.length === 0 ? (
+                      <p className="text-sm text-[var(--muted)]">沒有欠交紀錄</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {missingAssignments.map((a) => (
+                          <li
+                            key={a.id}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white px-3 py-2"
+                          >
+                            <div>
+                              <div className="font-medium">{a.title}</div>
+                              <div className="text-xs text-[var(--muted)]">
+                                {a.subject} · 截止 {a.dueDate}
+                              </div>
+                            </div>
+                            <Link
+                              to={`/result/${a.id}`}
+                              className="btn btn-secondary"
+                            >
+                              查看
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </li>
+            )
+          })}
           {ranked.length === 0 && (
             <li className="px-4 py-6 text-[var(--muted)]">未有學生資料</li>
           )}
@@ -131,6 +214,7 @@ export function HistoryPage() {
                       try {
                         deleteAssignment(a.id)
                         setMsg(`已刪除功課「${a.title}」`)
+                        setExpandedStudentId(null)
                       } catch (e) {
                         setMsg(e instanceof Error ? e.message : '刪除失敗')
                       }
