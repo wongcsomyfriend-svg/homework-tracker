@@ -22,17 +22,32 @@ function emptyData(): AppData {
 }
 
 function load(): AppData {
+  const base = emptyData()
   try {
     const raw = localStorage.getItem(KEY)
-    if (!raw) return emptyData()
-    return { ...emptyData(), ...JSON.parse(raw) } as AppData
+    if (!raw) return base
+    const parsed = JSON.parse(raw) as Partial<AppData>
+    return {
+      school: parsed.school ?? base.school,
+      classes: Array.isArray(parsed.classes) ? parsed.classes : [],
+      students: Array.isArray(parsed.students) ? parsed.students : [],
+      assignments: Array.isArray(parsed.assignments) ? parsed.assignments : [],
+      submissions: Array.isArray(parsed.submissions) ? parsed.submissions : [],
+      scanSessions: Array.isArray(parsed.scanSessions) ? parsed.scanSessions : [],
+    }
   } catch {
-    return emptyData()
+    return base
   }
 }
 
 function save(data: AppData) {
-  localStorage.setItem(KEY, JSON.stringify(data))
+  try {
+    localStorage.setItem(KEY, JSON.stringify(data))
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : '無法寫入本機儲存（localStorage）'
+    throw new Error(message)
+  }
   window.dispatchEvent(new CustomEvent('ht:data'))
 }
 
@@ -101,18 +116,86 @@ export function importStudents(
   classId: string,
   rows: { studentNo: string; name: string }[],
 ): Student[] {
+  if (!classId) throw new Error('缺少班別 ID')
+  const cleaned = rows
+    .map((row) => ({
+      studentNo: String(row.studentNo ?? '').trim(),
+      name: String(row.name ?? '').trim(),
+    }))
+    .filter((row) => row.studentNo && row.name)
+  if (!cleaned.length) throw new Error('沒有有效的學生列')
+
   const data = load()
   data.students = data.students.filter((s) => s.classId !== classId)
-  const created: Student[] = rows.slice(0, 50).map((row, index) => ({
+  const created: Student[] = cleaned.slice(0, 50).map((row, index) => ({
     id: uid('stu'),
     classId,
-    studentNo: row.studentNo.trim(),
-    name: row.name.trim(),
+    studentNo: row.studentNo,
+    name: row.name,
     markerId: index,
   }))
   data.students.push(...created)
   save(data)
   return created
+}
+
+export function addStudent(
+  classId: string,
+  studentNo: string,
+  name: string,
+): Student {
+  const data = load()
+  const existing = data.students.filter((s) => s.classId === classId)
+  if (existing.length >= 50) throw new Error('每班最多 50 人')
+  const used = new Set(existing.map((s) => s.markerId))
+  let markerId = 0
+  while (used.has(markerId) && markerId < 50) markerId += 1
+  const student: Student = {
+    id: uid('stu'),
+    classId,
+    studentNo: studentNo.trim(),
+    name: name.trim(),
+    markerId,
+  }
+  data.students.push(student)
+  save(data)
+  return student
+}
+
+export function updateStudent(
+  studentId: string,
+  patch: { studentNo?: string; name?: string },
+) {
+  const data = load()
+  const student = data.students.find((s) => s.id === studentId)
+  if (!student) throw new Error('找不到學生')
+  if (patch.studentNo !== undefined) student.studentNo = patch.studentNo.trim()
+  if (patch.name !== undefined) student.name = patch.name.trim()
+  save(data)
+  return student
+}
+
+export function removeStudent(studentId: string) {
+  const data = load()
+  data.students = data.students.filter((s) => s.id !== studentId)
+  data.submissions = data.submissions.filter((s) => s.studentId !== studentId)
+  save(data)
+}
+
+export function reassignMarkerIds(classId: string) {
+  const data = load()
+  const list = data.students
+    .filter((s) => s.classId === classId)
+    .sort((a, b) => {
+      const na = Number(a.studentNo)
+      const nb = Number(b.studentNo)
+      if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) return na - nb
+      return a.studentNo.localeCompare(b.studentNo, 'zh-Hant')
+    })
+  list.forEach((s, index) => {
+    s.markerId = index
+  })
+  save(data)
 }
 
 export function createAssignment(
@@ -220,15 +303,23 @@ export function getStudentMissingCounts(classId: string) {
 
 export function parseStudentCsv(text: string): { studentNo: string; name: string }[] {
   const lines = text
+    .replace(/^\uFEFF/, '')
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean)
   const rows: { studentNo: string; name: string }[] = []
   for (const line of lines) {
-    if (/^(學號|student|no)/i.test(line)) continue
-    const parts = line.split(/[,，\t]/).map((p) => p.trim())
+    // Skip header rows only (avoid matching student numbers like "no.3")
+    if (/^(學號|姓名|student\s*(no|id|number)?|name)\b/i.test(line)) continue
+    if (/^marker/i.test(line)) continue
+
+    let parts = line.split(/[,，\t|;；]/).map((p) => p.trim()).filter(Boolean)
+    if (parts.length < 2) {
+      // Fallback: "1 陳大文" or "1　陳大文"
+      parts = line.split(/[\s\u3000]+/).map((p) => p.trim()).filter(Boolean)
+    }
     if (parts.length < 2) continue
-    rows.push({ studentNo: parts[0], name: parts[1] })
+    rows.push({ studentNo: parts[0], name: parts.slice(1).join(' ') })
   }
   return rows
 }

@@ -1,19 +1,30 @@
 import { useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useData } from '../hooks/useData'
 import { createClass, deleteClass, updateSchoolName } from '../lib/store'
 
 export function ClassesPage() {
   const data = useData()
+  const navigate = useNavigate()
   const [name, setName] = useState('')
   const [year, setYear] = useState(new Date().getFullYear().toString())
   const [schoolName, setSchoolName] = useState(data.school.name)
+  const [error, setError] = useState('')
 
   function onCreate(e: FormEvent) {
     e.preventDefault()
-    if (!name.trim()) return
-    createClass(name, year)
-    setName('')
+    if (!name.trim()) {
+      setError('請輸入班別名稱')
+      return
+    }
+    try {
+      const room = createClass(name, year)
+      setName('')
+      setError('')
+      navigate(`/classes/${room.id}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '建立班別失敗')
+    }
   }
 
   return (
@@ -55,10 +66,15 @@ export function ClassesPage() {
           </div>
           <div className="flex items-end">
             <button type="submit" className="btn btn-primary w-full">
-              新增
+              新增並開啟
             </button>
           </div>
         </form>
+        {error && (
+          <p className="mt-3 rounded-xl bg-red-100 px-3 py-2 text-sm font-semibold text-red-700">
+            {error}
+          </p>
+        )}
       </section>
 
       <section className="space-y-3">
