@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useData } from '../hooks/useData'
-import { getStudentMissingCounts } from '../lib/store'
+import { deleteAssignment, getStudentMissingCounts } from '../lib/store'
 
 export function HistoryPage() {
   const data = useData()
   const [classId, setClassId] = useState(data.classes[0]?.id ?? '')
+  const [msg, setMsg] = useState('')
 
   const assignments = useMemo(
     () => data.assignments.filter((a) => !classId || a.classId === classId),
@@ -52,6 +53,11 @@ export function HistoryPage() {
             ))}
           </select>
         </div>
+        {msg && (
+          <p className="mt-3 rounded-xl bg-[var(--accent-soft)] px-3 py-2 text-sm font-semibold text-[var(--accent)]">
+            {msg}
+          </p>
+        )}
       </section>
 
       <section className="panel overflow-hidden">
@@ -107,9 +113,32 @@ export function HistoryPage() {
                       ` · 已交 ${submitted} / 欠交 ${missing}`}
                   </div>
                 </div>
-                <Link to={`/result/${a.id}`} className="btn btn-secondary">
-                  查看
-                </Link>
+                <div className="flex flex-wrap gap-2">
+                  <Link to={`/result/${a.id}`} className="btn btn-secondary">
+                    查看
+                  </Link>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => {
+                      if (
+                        !confirm(
+                          `刪除功課「${a.title}」？相關掃描紀錄也會一併刪除。`,
+                        )
+                      ) {
+                        return
+                      }
+                      try {
+                        deleteAssignment(a.id)
+                        setMsg(`已刪除功課「${a.title}」`)
+                      } catch (e) {
+                        setMsg(e instanceof Error ? e.message : '刪除失敗')
+                      }
+                    }}
+                  >
+                    刪除
+                  </button>
+                </div>
               </li>
             )
           })}

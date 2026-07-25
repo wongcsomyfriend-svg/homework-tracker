@@ -4,6 +4,7 @@ import { useData } from '../hooks/useData'
 import {
   addStudent,
   createAssignment,
+  deleteAssignment,
   getStudents,
   reassignMarkerIds,
   removeStudent,
@@ -84,6 +85,7 @@ export function ClassDetailPage() {
 
   function saveEdit() {
     try {
+      const seen = new Map<string, string>()
       for (const s of students) {
         const row = draft[s.id]
         if (!row) continue
@@ -93,6 +95,18 @@ export function ClassDetailPage() {
           showError(`Marker #${s.markerId} 的學號或姓名不能留空`)
           return
         }
+        const prev = seen.get(studentNo)
+        if (prev) {
+          showError(`學號「${studentNo}」重複（${prev} 與 ${name}），請修改`)
+          return
+        }
+        seen.set(studentNo, name)
+      }
+      for (const s of students) {
+        const row = draft[s.id]
+        if (!row) continue
+        const studentNo = row.studentNo.trim()
+        const name = row.name.trim()
         if (studentNo !== s.studentNo || name !== s.name) {
           updateStudent(s.id, { studentNo, name })
         }
@@ -102,6 +116,16 @@ export function ClassDetailPage() {
       showOk('已儲存名單修改')
     } catch (e) {
       showError(e instanceof Error ? e.message : '儲存失敗')
+    }
+  }
+
+  function handleDeleteAssignment(assignmentId: string, titleText: string) {
+    if (!confirm(`刪除功課「${titleText}」？相關掃描紀錄也會一併刪除。`)) return
+    try {
+      deleteAssignment(assignmentId)
+      showOk(`已刪除功課「${titleText}」`)
+    } catch (e) {
+      showError(e instanceof Error ? e.message : '刪除功課失敗')
     }
   }
 
@@ -392,12 +416,21 @@ export function ClassDetailPage() {
                   {a.subject || '一般'} · 截止 {a.dueDate}
                 </div>
               </div>
-              <Link
-                to={`/scan/${a.id}`}
-                className={`btn ${students.length ? 'btn-primary' : 'btn-ghost'}`}
-              >
-                開始掃描
-              </Link>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  to={`/scan/${a.id}`}
+                  className={`btn ${students.length ? 'btn-primary' : 'btn-ghost'}`}
+                >
+                  開始掃描
+                </Link>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => handleDeleteAssignment(a.id, a.title)}
+                >
+                  刪除
+                </button>
+              </div>
             </div>
           ))}
           {assignments.length === 0 && (

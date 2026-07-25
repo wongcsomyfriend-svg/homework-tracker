@@ -112,6 +112,28 @@ export function getStudents(classId: string) {
     .sort((a, b) => a.markerId - b.markerId)
 }
 
+function normalizeStudentNo(studentNo: string) {
+  return studentNo.trim()
+}
+
+/** Returns the conflicting student if 學號 already exists in the class. */
+export function findStudentNoConflict(
+  classId: string,
+  studentNo: string,
+  excludeStudentId?: string,
+) {
+  const normalized = normalizeStudentNo(studentNo)
+  if (!normalized) return null
+  return (
+    load().students.find(
+      (s) =>
+        s.classId === classId &&
+        s.id !== excludeStudentId &&
+        normalizeStudentNo(s.studentNo) === normalized,
+    ) ?? null
+  )
+}
+
 export function importStudents(
   classId: string,
   rows: { studentNo: string; name: string }[],
@@ -119,11 +141,19 @@ export function importStudents(
   if (!classId) throw new Error('缺少班別 ID')
   const cleaned = rows
     .map((row) => ({
-      studentNo: String(row.studentNo ?? '').trim(),
+      studentNo: normalizeStudentNo(String(row.studentNo ?? '')),
       name: String(row.name ?? '').trim(),
     }))
     .filter((row) => row.studentNo && row.name)
   if (!cleaned.length) throw new Error('沒有有效的學生列')
+
+  const seen = new Set<string>()
+  for (const row of cleaned) {
+    if (seen.has(row.studentNo)) {
+      throw new Error(`學號「${row.studentNo}」重複，請修改後再匯入`)
+    }
+    seen.add(row.studentNo)
+  }
 
   const data = load()
   data.students = data.students.filter((s) => s.classId !== classId)
@@ -147,13 +177,18 @@ export function addStudent(
   const data = load()
   const existing = data.students.filter((s) => s.classId === classId)
   if (existing.length >= 50) throw new Error('每班最多 50 人')
+  const no = normalizeStudentNo(studentNo)
+  if (!no) throw new Error('請填寫學號')
+  if (existing.some((s) => normalizeStudentNo(s.studentNo) === no)) {
+    throw new Error(`學號「${no}」已存在，請使用其他學號`)
+  }
   const used = new Set(existing.map((s) => s.markerId))
   let markerId = 0
   while (used.has(markerId) && markerId < 50) markerId += 1
   const student: Student = {
     id: uid('stu'),
     classId,
-    studentNo: studentNo.trim(),
+    studentNo: no,
     name: name.trim(),
     markerId,
   }
@@ -169,7 +204,20 @@ export function updateStudent(
   const data = load()
   const student = data.students.find((s) => s.id === studentId)
   if (!student) throw new Error('找不到學生')
-  if (patch.studentNo !== undefined) student.studentNo = patch.studentNo.trim()
+  if (patch.studentNo !== undefined) {
+    const no = normalizeStudentNo(patch.studentNo)
+    if (!no) throw new Error('學號不能留空')
+    const conflict = data.students.find(
+      (s) =>
+        s.classId === student.classId &&
+        s.id !== studentId &&
+        normalizeStudentNo(s.studentNo) === no,
+    )
+    if (conflict) {
+      throw new Error(`學號「${no}」已存在（${conflict.name}），請使用其他學號`)
+    }
+    student.studentNo = no
+  }
   if (patch.name !== undefined) student.name = patch.name.trim()
   save(data)
   return student
@@ -216,6 +264,20 @@ export function createAssignment(
   data.assignments.unshift(assignment)
   save(data)
   return assignment
+}
+
+export function deleteAssignment(assignmentId: string) {
+  const data = load()
+  const existed = data.assignments.some((a) => a.id === assignmentId)
+  if (!existed) throw new Error('找不到該功課紀錄')
+  data.assignments = data.assignments.filter((a) => a.id !== assignmentId)
+  data.submissions = data.submissions.filter(
+    (s) => s.assignmentId !== assignmentId,
+  )
+  data.scanSessions = data.scanSessions.filter(
+    (s) => s.assignmentId !== assignmentId,
+  )
+  save(data)
 }
 
 export function getAssignments(classId?: string) {
