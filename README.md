@@ -53,7 +53,7 @@ npm run build:all
 | Driver | 說明 |
 |--------|------|
 | `local`（預設） | 資料在瀏覽器；無需登入；可於「設定」匯出／匯入 JSON |
-| `supabase` | Magic Link 登入；建立／加入學校工作區；RLS 按 `school_id` 隔離 |
+| `supabase` | 電郵 + 密碼登入；建立／加入學校工作區；RLS 按 `school_id` 隔離 |
 
 未設 Supabase env、或 driver 非 `supabase` 時，一律走本機模式。學生端、共用工作區、推送提醒**僅雲端模式**可用。
 
@@ -63,28 +63,22 @@ npm run build:all
 2. 在 [supabase.com](https://supabase.com) 建專案
 3. SQL Editor 執行 [`supabase/schema.sql`](supabase/schema.sql)
 4. 複製 `.env.example` 為 `.env`，填入 URL / anon key，設 `VITE_STORAGE_DRIVER=supabase`
-5. Authentication → 啟用 Email；電郵範本 **Magic Link** 請改成寄出 6 位數碼（見下方）
-6. 重新部署後到「設定」登入 → 建立或加入學校 → **匯入 JSON**
+5. Authentication → Providers → Email：啟用；**關閉 Confirm email**（必做，否則註冊後不會即時登入，且會寄認證信）
+6. 重新部署後到「設定」用電郵 + 密碼註冊／登入 → 建立或加入學校 → **匯入 JSON**
 
-#### 電郵範本（必改，否則收不到 6 位數碼）
+老師登入全程在主畫面 App 內完成，**不會寄任何電郵**。這樣 iPhone 不會被電郵連結開到 Chrome，才能使用 Web Push 通知。
 
-Dashboard → **Authentication → Email Templates → Magic Link**，內文改成例如：
+免費方案若使用 Supabase 預設寄件：不能改電郵範本，且預設寄件只寄給組織成員，因此刻意避開電郵驗證碼／Magic Link。
 
-```html
-<h2>登入驗證碼</h2>
-<p>請在 App 內輸入此 6 位數碼（不用點連結）：</p>
-<p style="font-size:24px;letter-spacing:4px"><strong>{{ .Token }}</strong></p>
-```
-
-老師在主畫面 App 輸入電郵 → 寄送驗證碼 → 抄電郵裡的數字回來確認登入。
+忘記密碼：管理員到 Dashboard → Authentication → Users，為該用戶重設密碼。
 
 前端只使用 anon key；勿把 service role 放進前端。掃描相片只在手機本機分析，雲端只存結果（欠交狀態、detected IDs）。
 
 ### 同校老師共用工作區
 
-1. 第一位老師登入後到 `/onboarding` **建立學校**（成為 admin）
+1. 第一位老師用電郵 + 密碼註冊後到 `/onboarding` **建立學校**（成為 admin）
 2. 在「設定」複製 **學校邀請碼** 給同事
-3. 同事登入後用邀請碼 **加入**，即可看到同一批班別／學生／欠交
+3. 同事註冊／登入後用邀請碼 **加入**，即可看到同一批班別／學生／欠交
 
 ### 兩個獨立網站
 

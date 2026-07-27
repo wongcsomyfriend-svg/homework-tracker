@@ -12,13 +12,34 @@ import {
 import { getStudentAppUrl } from '../lib/cloud'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 
+function translateAuthError(message: string): string {
+  const lower = message.toLowerCase()
+  if (lower.includes('invalid login credentials')) {
+    return '電郵或密碼不正確'
+  }
+  if (
+    lower.includes('user already registered') ||
+    lower.includes('already been registered')
+  ) {
+    return '此電郵已註冊，請改用「登入」'
+  }
+  if (lower.includes('password should be at least')) {
+    return '密碼至少 6 位'
+  }
+  if (lower.includes('email rate limit') || lower.includes('rate limit')) {
+    return '請求過於頻繁，請稍後再試'
+  }
+  return message
+}
+
 export function LoginPage() {
   const data = useData()
   const driver = getStorageDriver()
   const fileRef = useRef<HTMLInputElement>(null)
   const [email, setEmail] = useState('')
-  const [otp, setOtp] = useState('')
-  const [otpSent, setOtpSent] = useState(false)
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -57,7 +78,7 @@ export function LoginPage() {
     setErr(text)
   }
 
-  async function onSendCode(e: FormEvent) {
+  async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!supabase) {
       showError(
@@ -65,48 +86,53 @@ export function LoginPage() {
       )
       return
     }
-    setBusy(true)
-    setMsg('')
-    setErr('')
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        // Still set redirect for users who click the link; primary flow is OTP in-app.
-        emailRedirectTo: `${window.location.origin}${import.meta.env.BASE_URL}login`,
-      },
-    })
-    setBusy(false)
-    if (error) showError(error.message)
-    else {
-      setOtpSent(true)
-      setOtp('')
-      showOk('已寄出 6 位數驗證碼，請查看電郵後在下方輸入（不用點連結）。')
-    }
-  }
 
-  async function onVerifyCode(e: FormEvent) {
-    e.preventDefault()
-    if (!supabase) return
-    const token = otp.replace(/\s/g, '')
-    if (!/^\d{6}$/.test(token)) {
-      showError('請輸入電郵內的 6 位數字驗證碼')
+    const trimmedEmail = email.trim()
+    if (password.length < 6) {
+      showError('密碼至少 6 位')
       return
     }
+    if (mode === 'signup' && password !== confirmPassword) {
+      showError('兩次輸入的密碼不一致')
+      return
+    }
+
     setBusy(true)
     setMsg('')
     setErr('')
-    const { error } = await supabase.auth.verifyOtp({
-      email: email.trim(),
-      token,
-      type: 'email',
-    })
-    setBusy(false)
-    if (error) showError(error.message)
-    else {
-      setOtpSent(false)
-      setOtp('')
+
+    try {
+      if (mode === 'signup') {
+        const { data: signUpData, error } = await supabase.auth.signUp({
+          email: trimmedEmail,
+          password,
+        })
+        if (error) {
+          showError(translateAuthError(error.message))
+          return
+        }
+        if (!signUpData.session) {
+          showError(
+            '註冊成功但未即時登入：請在 Supabase Dashboard → Authentication → Providers → Email 關閉 Confirm email。',
+          )
+          return
+        }
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: trimmedEmail,
+          password,
+        })
+        if (error) {
+          showError(translateAuthError(error.message))
+          return
+        }
+      }
+      setPassword('')
+      setConfirmPassword('')
       showOk('登入成功')
       await readyStorage().catch(() => undefined)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -307,7 +333,7 @@ export function LoginPage() {
       </section>
 
       <section className="panel p-6">
-        <h2 className="text-lg font-bold">雲端登入（電郵驗證碼）</h2>
+        <h2 className="text-lg font-bold">雲端登入（電郵 + 密碼）</h2>
         {!supabaseConfigured ? (
           <p className="mt-2 text-sm text-[var(--muted)]">
             尚未設定 Supabase。在 `.env` 填入 `VITE_SUPABASE_URL`、
@@ -331,72 +357,93 @@ export function LoginPage() {
         ) : (
           <>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              iPhone 請用主畫面 App 完成登入：先寄驗證碼，再到電郵抄 6
-              位數字回來輸入（不要點電郵裡的連結，以免開到 Chrome）。
+              不會寄任何電郵，可直接在主畫面 App 登入或註冊。iPhone
+              請務必用主畫面捷徑開啟，才能使用通知。
             </p>
-            <form onSubmit={onSendCode} className="mt-4 space-y-3">
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                className={`btn flex-1 ${mode === 'signin' ? 'btn-primary' : 'btn-ghost'}`}
+                disabled={busy}
+                onClick={() => {
+                  setMode('signin')
+                  setErr('')
+                  setMsg('')
+                }}
+              >
+                登入
+              </button>
+              <button
+                type="button"
+                className={`btn flex-1 ${mode === 'signup' ? 'btn-primary' : 'btn-ghost'}`}
+                disabled={busy}
+                onClick={() => {
+                  setMode('signup')
+                  setErr('')
+                  setMsg('')
+                }}
+              >
+                註冊
+              </button>
+            </div>
+            <form onSubmit={onSubmit} className="mt-4 space-y-3">
               <div className="field">
                 <label>電郵</label>
                 <input
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value)
-                    setOtpSent(false)
-                  }}
+                  onChange={(e) => setEmail(e.target.value)}
                   placeholder="teacher@school.edu.hk"
                   autoComplete="email"
                 />
               </div>
+              <div className="field">
+                <label>密碼</label>
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="至少 6 位"
+                  autoComplete={
+                    mode === 'signup' ? 'new-password' : 'current-password'
+                  }
+                />
+              </div>
+              {mode === 'signup' && (
+                <div className="field">
+                  <label>確認密碼</label>
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="再輸入一次"
+                    autoComplete="new-password"
+                  />
+                </div>
+              )}
               <button
                 type="submit"
                 className="btn btn-primary w-full"
                 disabled={busy}
               >
-                {busy && !otpSent ? '傳送中…' : '寄送驗證碼'}
+                {busy
+                  ? mode === 'signup'
+                    ? '註冊中…'
+                    : '登入中…'
+                  : mode === 'signup'
+                    ? '註冊並登入'
+                    : '登入'}
               </button>
             </form>
-            {otpSent && (
-              <form onSubmit={onVerifyCode} className="mt-4 space-y-3">
-                <div className="field">
-                  <label>6 位數驗證碼</label>
-                  <input
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    maxLength={6}
-                    required
-                    value={otp}
-                    onChange={(e) =>
-                      setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))
-                    }
-                    placeholder="123456"
-                    className="font-mono tracking-widest text-center text-xl"
-                    autoComplete="one-time-code"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="btn btn-secondary w-full"
-                  disabled={busy || otp.length !== 6}
-                >
-                  {busy ? '驗證中…' : '確認登入'}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost w-full"
-                  disabled={busy}
-                  onClick={() => {
-                    setOtpSent(false)
-                    setOtp('')
-                    setMsg('')
-                    setErr('')
-                  }}
-                >
-                  重新輸入電郵
-                </button>
-              </form>
-            )}
+            <p className="mt-3 text-xs text-[var(--muted)]">
+              忘記密碼：請找管理員在 Supabase Dashboard → Authentication →
+              Users 重設。
+            </p>
           </>
         )}
         {msg && (
