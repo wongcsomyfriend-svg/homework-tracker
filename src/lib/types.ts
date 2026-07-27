@@ -19,7 +19,10 @@ export interface Student {
   studentNo: string
   name: string
   markerId: number
+  claimCode?: string | null
 }
+
+export type WorkspaceState = 'ready' | 'needsOnboarding' | 'signedOut'
 
 export interface Assignment {
   id: string

@@ -21,6 +21,42 @@ export async function readyStorage() {
   return getAdapter().ready()
 }
 
+export function getWorkspaceState() {
+  return getAdapter().getWorkspaceState()
+}
+
+export async function createSchool(name: string) {
+  return getAdapter().createSchool(name)
+}
+
+export async function joinSchool(code: string) {
+  return getAdapter().joinSchool(code)
+}
+
+export async function getJoinCode() {
+  return getAdapter().getJoinCode()
+}
+
+export async function rotateJoinCode() {
+  return getAdapter().rotateJoinCode()
+}
+
+export async function getStudentClaimCode(studentId: string) {
+  return getAdapter().getStudentClaimCode(studentId)
+}
+
+export async function rotateStudentClaimCode(studentId: string) {
+  return getAdapter().rotateStudentClaimCode(studentId)
+}
+
+export async function listStudentLinks(studentId: string) {
+  return getAdapter().listStudentLinks(studentId)
+}
+
+export async function unlinkStudent(studentId: string, userId?: string) {
+  return getAdapter().unlinkStudent(studentId, userId)
+}
+
 export async function updateSchoolName(name: string) {
   return getAdapter().updateSchoolName(name)
 }

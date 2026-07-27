@@ -24,9 +24,23 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Teacher app → dist/
       - run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_STORAGE_DRIVER: supabase
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
+          VITE_STUDENT_APP_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/student/
+      # Student app → dist/student/ (must run after teacher build)
+      - run: npm run build:student
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_STORAGE_DRIVER: supabase
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

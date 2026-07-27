@@ -3,10 +3,13 @@ import { Link } from 'react-router-dom'
 import { useData } from '../hooks/useData'
 import {
   exportWorkspaceJson,
+  getJoinCode,
   getStorageDriver,
   importWorkspaceJson,
   readyStorage,
+  rotateJoinCode,
 } from '../lib/store'
+import { getStudentAppUrl } from '../lib/cloud'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 
 export function LoginPage() {
@@ -18,6 +21,7 @@ export function LoginPage() {
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const [userEmail, setUserEmail] = useState<string | null>(null)
+  const [joinCode, setJoinCode] = useState<string | null>(null)
 
   useEffect(() => {
     if (!supabase) return
@@ -30,6 +34,16 @@ export function LoginPage() {
     })
     return () => sub.subscription.unsubscribe()
   }, [])
+
+  useEffect(() => {
+    if (data.workspaceState !== 'ready') {
+      setJoinCode(null)
+      return
+    }
+    void getJoinCode()
+      .then(setJoinCode)
+      .catch(() => setJoinCode(null))
+  }, [data.workspaceState, data.school.id])
 
   function showOk(text: string) {
     setErr('')
@@ -163,6 +177,99 @@ export function LoginPage() {
               if (file) void onImportFile(file)
             }}
           />
+        </div>
+      </section>
+
+      {driver === 'supabase' && data.workspaceState === 'ready' && (
+        <section className="panel p-6">
+          <h2 className="text-lg font-bold">學校邀請碼</h2>
+          <p className="mt-1 text-sm text-[var(--muted)]">
+            同事可用此碼加入同一個工作區，共用班別與欠交資料。
+          </p>
+          <p className="mt-3 font-mono text-2xl font-bold tracking-widest">
+            {joinCode || '—'}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy || !joinCode}
+              onClick={() => {
+                if (!joinCode) return
+                void navigator.clipboard.writeText(joinCode).then(
+                  () => showOk('已複製邀請碼'),
+                  () => showError('無法複製'),
+                )
+              }}
+            >
+              複製
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={busy}
+              onClick={() =>
+                void rotateJoinCode()
+                  .then((code) => {
+                    setJoinCode(code)
+                    showOk('已重設邀請碼')
+                  })
+                  .catch((e) =>
+                    showError(e instanceof Error ? e.message : '重設失敗'),
+                  )
+              }
+            >
+              重設邀請碼（僅管理員）
+            </button>
+            <Link to="/onboarding" className="btn btn-ghost">
+              建立／加入學校
+            </Link>
+          </div>
+        </section>
+      )}
+
+      {driver === 'supabase' && data.workspaceState === 'needsOnboarding' && (
+        <section className="panel p-6">
+          <h2 className="text-lg font-bold">尚未加入學校</h2>
+          <p className="mt-2 text-sm text-[var(--muted)]">
+            登入後請建立新學校，或輸入同事邀請碼加入共用工作區。
+          </p>
+          <Link to="/onboarding" className="btn btn-primary mt-4">
+            前往建立／加入
+          </Link>
+        </section>
+      )}
+
+      <section className="panel p-6">
+        <h2 className="text-lg font-bold">學生端網址</h2>
+        <p className="mt-1 text-sm text-[var(--muted)]">
+          學生請開啟獨立的「我的功課」網站（可加入主畫面）。認領 QR 已指向此網址。
+        </p>
+        <p className="mt-3 break-all font-mono text-sm">{getStudentAppUrl()}</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <a
+            href={getStudentAppUrl()}
+            target="_blank"
+            rel="noreferrer"
+            className="btn btn-secondary"
+          >
+            開啟學生端
+          </a>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              void navigator.clipboard.writeText(getStudentAppUrl()).then(
+                () => showOk('已複製學生端網址'),
+                () => showError('無法複製'),
+              )
+            }}
+          >
+            複製網址
+          </button>
+          <Link to="/reminders" className="btn btn-ghost">
+            提醒設定
+          </Link>
         </div>
       </section>
 

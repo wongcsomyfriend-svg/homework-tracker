@@ -8,6 +8,8 @@ import {
   getStudents,
   reassignMarkerIds,
   removeStudent,
+  rotateStudentClaimCode,
+  unlinkStudent,
   updateStudent,
 } from '../lib/store'
 import type { Student } from '../lib/types'
@@ -184,6 +186,9 @@ export function ClassDetailPage() {
             <Link to={`/classes/${classId}/labels`} className="btn btn-secondary">
               列印標籤
             </Link>
+            <Link to={`/classes/${classId}/codes`} className="btn btn-secondary">
+              學生認領碼
+            </Link>
             <Link to="/classes" className="btn btn-ghost">
               返回
             </Link>
@@ -288,6 +293,7 @@ export function ClassDetailPage() {
                 <th className="px-3 py-2">Marker</th>
                 <th className="px-3 py-2">學號</th>
                 <th className="px-3 py-2">姓名</th>
+                <th className="px-3 py-2">認領碼</th>
                 {editing && <th className="px-3 py-2" />}
               </tr>
             </thead>
@@ -333,6 +339,46 @@ export function ClassDetailPage() {
                       s.name
                     )}
                   </td>
+                  <td className="px-3 py-2">
+                    <div className="font-mono text-xs tracking-wider">
+                      {s.claimCode || '—'}
+                    </div>
+                    {!editing && s.claimCode && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          className="text-xs font-semibold text-[var(--accent)] underline"
+                          onClick={() =>
+                            void rotateStudentClaimCode(s.id)
+                              .then(() => showOk(`已重設 ${s.name} 的認領碼`))
+                              .catch((e) =>
+                                showError(
+                                  e instanceof Error ? e.message : '重設失敗',
+                                ),
+                              )
+                          }
+                        >
+                          重設碼
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs font-semibold text-red-700 underline"
+                          onClick={() => {
+                            if (!confirm(`解除「${s.name}」所有裝置綁定？`)) return
+                            void unlinkStudent(s.id)
+                              .then(() => showOk(`已解除 ${s.name} 的綁定`))
+                              .catch((e) =>
+                                showError(
+                                  e instanceof Error ? e.message : '解除失敗',
+                                ),
+                              )
+                          }}
+                        >
+                          解除綁定
+                        </button>
+                      </div>
+                    )}
+                  </td>
                   {editing && (
                     <td className="px-3 py-2 text-right">
                       <button
@@ -349,7 +395,7 @@ export function ClassDetailPage() {
               {students.length === 0 && (
                 <tr>
                   <td
-                    colSpan={editing ? 4 : 3}
+                    colSpan={editing ? 5 : 4}
                     className="px-4 py-6 text-[var(--muted)]"
                   >
                     尚未有學生。請在上方用學號、姓名新增。

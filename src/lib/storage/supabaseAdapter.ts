@@ -8,6 +8,7 @@ import type {
   Student,
   Submission,
   SubmissionStatus,
+  WorkspaceState,
 } from '../types'
 import type { StorageAdapter } from './adapter'
 import { notifyDataChanged, subscribeData } from './notify'
@@ -26,6 +27,7 @@ type DbStudent = {
   student_no: string
   name: string
   marker_id: number
+  claim_code?: string | null
 }
 
 type DbAssignment = {
@@ -85,6 +87,7 @@ function mapStudent(row: DbStudent): Student {
     studentNo: row.student_no,
     name: row.name,
     markerId: row.marker_id,
+    claimCode: row.claim_code ?? null,
   }
 }
 
@@ -127,6 +130,8 @@ export function createSupabaseAdapter(client: SupabaseClient): StorageAdapter {
   let cache = emptyCache()
   let readyPromise: Promise<void> | null = null
   let user: User | null = null
+  let workspaceState: WorkspaceState = 'signedOut'
+  let joinCode: string | null = null
 
   async function requireUser() {
     const { data, error } = await client.auth.getUser()
@@ -142,16 +147,8 @@ export function createSupabaseAdapter(client: SupabaseClient): StorageAdapter {
       await refresh()
     }
     if (!cache.school.id) {
-      throw new Error('請先登入後再使用雲端資料')
+      throw new Error('請先建立或加入學校工作區')
     }
-  }
-
-  async function ensureWorkspace() {
-    const { data, error } = await client.rpc('ensure_my_workspace', {
-      p_school_name: '我的學校',
-    })
-    if (error) dbError(error, '無法建立學校工作區')
-    return data as string
   }
 
   async function refresh() {
@@ -159,32 +156,40 @@ export function createSupabaseAdapter(client: SupabaseClient): StorageAdapter {
     if (authError) dbError(authError, '無法取得登入狀態')
     if (!authData.user) {
       user = null
+      workspaceState = 'signedOut'
+      joinCode = null
       cache = emptyCache()
       notifyDataChanged()
       return
     }
     user = authData.user
-    await ensureWorkspace()
 
     const { data: profile, error: profileError } = await client
       .from('profiles')
-      .select('school_id, schools(id, name)')
+      .select('school_id, schools(id, name, join_code)')
       .eq('id', user.id)
-      .single()
-    if (profileError || !profile) {
-      dbError(profileError, '無法讀取個人資料')
-    }
-    const profileRow = profile!
+      .maybeSingle()
 
-    const schoolJoin = profileRow.schools as unknown as
-      | { id: string; name: string }
-      | { id: string; name: string }[]
+    if (profileError) dbError(profileError, '無法讀取個人資料')
+    if (!profile) {
+      workspaceState = 'needsOnboarding'
+      joinCode = null
+      cache = emptyCache()
+      notifyDataChanged()
+      return
+    }
+
+    const schoolJoin = profile.schools as unknown as
+      | { id: string; name: string; join_code?: string }
+      | { id: string; name: string; join_code?: string }[]
       | null
     const schoolRow = Array.isArray(schoolJoin) ? schoolJoin[0] : schoolJoin
     const school: School = {
-      id: profileRow.school_id as string,
+      id: profile.school_id as string,
       name: schoolRow?.name ?? '我的學校',
     }
+    joinCode = schoolRow?.join_code ?? null
+    workspaceState = 'ready'
 
     const { data: classes, error: classError } = await client
       .from('classes')
@@ -267,7 +272,88 @@ export function createSupabaseAdapter(client: SupabaseClient): StorageAdapter {
       return cache
     },
 
+    getWorkspaceState() {
+      return workspaceState
+    },
+
     subscribe: subscribeData,
+
+    async createSchool(name: string) {
+      await requireUser()
+      const { error } = await client.rpc('create_school', {
+        p_name: name.trim() || '我的學校',
+      })
+      if (error) dbError(error, '無法建立學校')
+      await refresh()
+    },
+
+    async joinSchool(code: string) {
+      await requireUser()
+      const { error } = await client.rpc('join_school', {
+        p_code: code.trim(),
+      })
+      if (error) dbError(error, '無法加入學校')
+      await refresh()
+    },
+
+    async getJoinCode() {
+      await this.ready()
+      return joinCode
+    },
+
+    async rotateJoinCode() {
+      await requireSession()
+      const { data, error } = await client.rpc('rotate_school_join_code')
+      if (error) dbError(error, '無法重設邀請碼')
+      joinCode = data as string
+      notifyDataChanged()
+      return joinCode
+    },
+
+    async getStudentClaimCode(studentId: string) {
+      await requireSession()
+      const student = cache.students.find((s) => s.id === studentId)
+      return student?.claimCode ?? null
+    },
+
+    async rotateStudentClaimCode(studentId: string) {
+      await requireSession()
+      const { data, error } = await client.rpc('rotate_student_claim_code', {
+        p_student_id: studentId,
+      })
+      if (error) dbError(error, '無法重設認領碼')
+      const code = data as string
+      cache = {
+        ...cache,
+        students: cache.students.map((s) =>
+          s.id === studentId ? { ...s, claimCode: code } : s,
+        ),
+      }
+      notifyDataChanged()
+      return code
+    },
+
+    async listStudentLinks(studentId: string) {
+      await requireSession()
+      const { data, error } = await client
+        .from('student_links')
+        .select('user_id, created_at')
+        .eq('student_id', studentId)
+      if (error) dbError(error, '無法讀取綁定裝置')
+      return (data ?? []).map((row) => ({
+        userId: row.user_id as string,
+        createdAt: row.created_at as string,
+      }))
+    },
+
+    async unlinkStudent(studentId: string, userId?: string) {
+      await requireSession()
+      const { error } = await client.rpc('unlink_student', {
+        p_student_id: studentId,
+        p_user_id: userId ?? null,
+      })
+      if (error) dbError(error, '無法解除綁定')
+    },
 
     async updateSchoolName(name: string) {
       await this.ready()

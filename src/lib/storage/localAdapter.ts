@@ -6,6 +6,7 @@ import type {
   ScanSession,
   Student,
   Submission,
+  WorkspaceState,
 } from '../types'
 import type { StorageAdapter } from './adapter'
 import { notifyDataChanged, subscribeData } from './notify'
@@ -76,6 +77,10 @@ function missingCounts(data: AppData, classId: string): Map<string, number> {
   return counts
 }
 
+function cloudOnly(): never {
+  throw new Error('此功能需要雲端模式')
+}
+
 export function createLocalAdapter(): StorageAdapter {
   return {
     driver: 'local',
@@ -87,7 +92,44 @@ export function createLocalAdapter(): StorageAdapter {
     },
 
     getData: load,
+
+    getWorkspaceState(): WorkspaceState {
+      return 'ready'
+    },
+
     subscribe: subscribeData,
+
+    async createSchool() {
+      cloudOnly()
+    },
+
+    async joinSchool() {
+      cloudOnly()
+    },
+
+    async getJoinCode() {
+      return null
+    },
+
+    async rotateJoinCode() {
+      cloudOnly()
+    },
+
+    async getStudentClaimCode() {
+      return null
+    },
+
+    async rotateStudentClaimCode() {
+      cloudOnly()
+    },
+
+    async listStudentLinks() {
+      return []
+    },
+
+    async unlinkStudent() {
+      cloudOnly()
+    },
 
     async updateSchoolName(name: string) {
       const data = load()
