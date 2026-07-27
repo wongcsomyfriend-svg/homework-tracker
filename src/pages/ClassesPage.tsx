@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useData } from '../hooks/useData'
 import { createClass, deleteClass, updateSchoolName } from '../lib/store'
@@ -10,27 +10,41 @@ export function ClassesPage() {
   const [year, setYear] = useState(new Date().getFullYear().toString())
   const [schoolName, setSchoolName] = useState(data.school.name)
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  function onCreate(e: FormEvent) {
+  useEffect(() => {
+    if (data.school.name) setSchoolName(data.school.name)
+  }, [data.school.name])
+
+  async function onCreate(e: FormEvent) {
     e.preventDefault()
     if (!name.trim()) {
       setError('請輸入班別名稱')
       return
     }
+    setBusy(true)
     try {
-      const room = createClass(name, year)
+      const room = await createClass(name, year)
       setName('')
       setError('')
       navigate(`/classes/${room.id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : '建立班別失敗')
+    } finally {
+      setBusy(false)
     }
   }
 
   return (
     <div className="space-y-5">
+      {data.storageError && (
+        <p className="rounded-xl bg-red-100 px-3 py-2 text-sm font-semibold text-red-700">
+          {data.storageError}
+        </p>
+      )}
       <section className="panel p-5">
         <h1 className="text-2xl font-bold">班別管理</h1>
+        <p className="mt-1 text-sm text-[var(--muted)]">{data.storageMode}</p>
         <div className="mt-4 flex flex-wrap gap-2">
           <input
             className="min-w-[200px] flex-1 rounded-xl border border-[var(--line)] px-3 py-2"
@@ -41,7 +55,12 @@ export function ClassesPage() {
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => updateSchoolName(schoolName)}
+            disabled={busy}
+            onClick={() => {
+              void updateSchoolName(schoolName).catch((err) =>
+                setError(err instanceof Error ? err.message : '儲存失敗'),
+              )
+            }}
           >
             儲存學校名
           </button>
@@ -65,8 +84,12 @@ export function ClassesPage() {
             <input value={year} onChange={(e) => setYear(e.target.value)} />
           </div>
           <div className="flex items-end">
-            <button type="submit" className="btn btn-primary w-full">
-              新增並開啟
+            <button
+              type="submit"
+              className="btn btn-primary w-full"
+              disabled={busy || !data.storageReady}
+            >
+              {busy ? '處理中…' : '新增並開啟'}
             </button>
           </div>
         </form>
@@ -102,7 +125,10 @@ export function ClassesPage() {
                   type="button"
                   className="btn btn-danger"
                   onClick={() => {
-                    if (confirm(`刪除班別 ${room.name}？`)) deleteClass(room.id)
+                    if (!confirm(`刪除班別 ${room.name}？`)) return
+                    void deleteClass(room.id).catch((err) =>
+                      setError(err instanceof Error ? err.message : '刪除失敗'),
+                    )
                   }}
                 >
                   刪除

@@ -69,21 +69,31 @@ export function ResultPage() {
     setSaved(false)
   }
 
-  function onSave() {
+  const [saveError, setSaveError] = useState('')
+
+  async function onSave(): Promise<boolean> {
     const detectedIds = students
       .filter((s) => statuses[s.id] === 'submitted')
       .map((s) => s.markerId)
-    saveScanResult({
-      assignmentId,
-      detectedIds,
-      statuses,
-    })
-    setSaved(true)
+    try {
+      await saveScanResult({
+        assignmentId,
+        detectedIds,
+        statuses,
+      })
+      setSaved(true)
+      setSaveError('')
+      return true
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : '儲存失敗')
+      return false
+    }
   }
 
-  function onExport() {
+  async function onExport() {
     if (!assignment) return
-    onSave()
+    const ok = await onSave()
+    if (!ok) return
     const csv = exportSubmissionsCsv(assignmentId)
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
@@ -107,11 +117,24 @@ export function ResultPage() {
             欠交 {missing.length}
           </div>
         </div>
+        {saveError && (
+          <p className="mt-3 rounded-xl bg-red-100 px-3 py-2 text-sm font-semibold text-red-700">
+            {saveError}
+          </p>
+        )}
         <div className="mt-4 flex flex-wrap gap-2">
-          <button type="button" className="btn btn-primary" onClick={onSave}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void onSave()}
+          >
             {saved ? '已儲存' : '儲存結果'}
           </button>
-          <button type="button" className="btn btn-secondary" onClick={onExport}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => void onExport()}
+          >
             匯出 CSV
           </button>
           <Link to={`/scan/${assignmentId}`} className="btn btn-ghost">

@@ -50,17 +50,19 @@ export function ClassDetailPage() {
     setErr(text)
   }
 
-  function handleAddStudent(e: FormEvent) {
+  async function handleAddStudent(e: FormEvent) {
     e.preventDefault()
     try {
       if (!newNo.trim() || !newName.trim()) {
         showError('請填寫學號與姓名')
         return
       }
-      addStudent(classId, newNo, newName)
+      const no = newNo.trim()
+      const name = newName.trim()
+      await addStudent(classId, no, name)
       setNewNo('')
       setNewName('')
-      showOk(`已新增：${newNo.trim()} ${newName.trim()}`)
+      showOk(`已新增：${no} ${name}`)
     } catch (e) {
       showError(e instanceof Error ? e.message : '新增失敗')
     }
@@ -83,7 +85,7 @@ export function ClassDetailPage() {
     setErr('')
   }
 
-  function saveEdit() {
+  async function saveEdit() {
     try {
       const seen = new Map<string, string>()
       for (const s of students) {
@@ -108,7 +110,7 @@ export function ClassDetailPage() {
         const studentNo = row.studentNo.trim()
         const name = row.name.trim()
         if (studentNo !== s.studentNo || name !== s.name) {
-          updateStudent(s.id, { studentNo, name })
+          await updateStudent(s.id, { studentNo, name })
         }
       }
       setEditing(false)
@@ -119,27 +121,27 @@ export function ClassDetailPage() {
     }
   }
 
-  function handleDeleteAssignment(assignmentId: string, titleText: string) {
+  async function handleDeleteAssignment(assignmentId: string, titleText: string) {
     if (!confirm(`刪除功課「${titleText}」？相關掃描紀錄也會一併刪除。`)) return
     try {
-      deleteAssignment(assignmentId)
+      await deleteAssignment(assignmentId)
       showOk(`已刪除功課「${titleText}」`)
     } catch (e) {
       showError(e instanceof Error ? e.message : '刪除功課失敗')
     }
   }
 
-  function handleDelete(s: Student) {
+  async function handleDelete(s: Student) {
     if (!confirm(`刪除 ${s.studentNo} ${s.name}？`)) return
     try {
-      removeStudent(s.id)
+      await removeStudent(s.id)
       showOk('已刪除學生')
     } catch (e) {
       showError(e instanceof Error ? e.message : '刪除失敗')
     }
   }
 
-  function handleCreateAssignment(e: FormEvent) {
+  async function handleCreateAssignment(e: FormEvent) {
     e.preventDefault()
     try {
       if (!students.length) {
@@ -150,7 +152,7 @@ export function ClassDetailPage() {
         showError('請填寫功課標題')
         return
       }
-      const a = createAssignment(classId, title, subject, dueDate)
+      const a = await createAssignment(classId, title, subject, dueDate)
       setTitle('')
       showOk(`已建立功課「${a.title}」`)
     } catch (e) {
@@ -255,12 +257,13 @@ export function ClassDetailPage() {
                   className="btn btn-ghost"
                   disabled={!students.length}
                   onClick={() => {
-                    try {
-                      reassignMarkerIds(classId)
-                      showOk('已按學號重新分配 Marker ID')
-                    } catch (e) {
-                      showError(e instanceof Error ? e.message : '重新分配失敗')
-                    }
+                    void reassignMarkerIds(classId)
+                      .then(() => showOk('已按學號重新分配 Marker ID'))
+                      .catch((e) =>
+                        showError(
+                          e instanceof Error ? e.message : '重新分配失敗',
+                        ),
+                      )
                   }}
                 >
                   重排 Marker ID

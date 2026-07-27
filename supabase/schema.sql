@@ -66,9 +66,44 @@ create or replace function public.my_school_id()
 returns uuid
 language sql
 stable
+security definer
+set search_path = public
 as $$
   select school_id from profiles where id = auth.uid()
 $$;
+
+-- First Magic Link login: create school + profile for the authenticated user.
+create or replace function public.ensure_my_workspace(p_school_name text default '我的學校')
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_school_id uuid;
+begin
+  if v_uid is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select school_id into v_school_id from profiles where id = v_uid;
+  if v_school_id is not null then
+    return v_school_id;
+  end if;
+
+  insert into schools (name)
+  values (coalesce(nullif(trim(p_school_name), ''), '我的學校'))
+  returning id into v_school_id;
+
+  insert into profiles (id, school_id, name, role)
+  values (v_uid, v_school_id, '', 'teacher');
+
+  return v_school_id;
+end;
+$$;
+
+grant execute on function public.ensure_my_workspace(text) to authenticated;
 
 alter table schools enable row level security;
 alter table profiles enable row level security;
@@ -82,12 +117,20 @@ create policy "profiles read own school"
   on profiles for select
   using (school_id = public.my_school_id() or id = auth.uid());
 
+create policy "profiles insert self"
+  on profiles for insert
+  with check (id = auth.uid());
+
 create policy "profiles update self"
   on profiles for update
   using (id = auth.uid());
 
 create policy "schools read own"
   on schools for select
+  using (id = public.my_school_id());
+
+create policy "schools update own"
+  on schools for update
   using (id = public.my_school_id());
 
 create policy "classes by school"

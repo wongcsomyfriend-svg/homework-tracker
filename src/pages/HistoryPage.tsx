@@ -211,13 +211,14 @@ export function HistoryPage() {
                       ) {
                         return
                       }
-                      try {
-                        deleteAssignment(a.id)
-                        setMsg(`已刪除功課「${a.title}」`)
-                        setExpandedStudentId(null)
-                      } catch (e) {
-                        setMsg(e instanceof Error ? e.message : '刪除失敗')
-                      }
+                      void deleteAssignment(a.id)
+                        .then(() => {
+                          setMsg(`已刪除功課「${a.title}」`)
+                          setExpandedStudentId(null)
+                        })
+                        .catch((e) => {
+                          setMsg(e instanceof Error ? e.message : '刪除失敗')
+                        })
                     }}
                   >
                     刪除

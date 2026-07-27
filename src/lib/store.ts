@@ -1,366 +1,134 @@
-import { uid } from './id'
 import type {
-  AppData,
   Assignment,
   ClassRoom,
   ScanSession,
   Student,
   SubmissionStatus,
 } from './types'
+import { getAdapter, getStorageDriver, getStorageModeLabel } from './storage/driver'
 
-const KEY = 'homework-tracker:v1'
+export { getStorageDriver, getStorageModeLabel }
 
-function emptyData(): AppData {
-  return {
-    school: { id: uid('school'), name: '我的學校' },
-    classes: [],
-    students: [],
-    assignments: [],
-    submissions: [],
-    scanSessions: [],
-  }
-}
-
-function load(): AppData {
-  const base = emptyData()
-  try {
-    const raw = localStorage.getItem(KEY)
-    if (!raw) return base
-    const parsed = JSON.parse(raw) as Partial<AppData>
-    return {
-      school: parsed.school ?? base.school,
-      classes: Array.isArray(parsed.classes) ? parsed.classes : [],
-      students: Array.isArray(parsed.students) ? parsed.students : [],
-      assignments: Array.isArray(parsed.assignments) ? parsed.assignments : [],
-      submissions: Array.isArray(parsed.submissions) ? parsed.submissions : [],
-      scanSessions: Array.isArray(parsed.scanSessions) ? parsed.scanSessions : [],
-    }
-  } catch {
-    return base
-  }
-}
-
-function save(data: AppData) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(data))
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : '無法寫入本機儲存（localStorage）'
-    throw new Error(message)
-  }
-  window.dispatchEvent(new CustomEvent('ht:data'))
-}
-
-export function getData(): AppData {
-  return load()
+export function getData() {
+  return getAdapter().getData()
 }
 
 export function subscribe(cb: () => void) {
-  const handler = () => cb()
-  window.addEventListener('ht:data', handler)
-  window.addEventListener('storage', handler)
-  return () => {
-    window.removeEventListener('ht:data', handler)
-    window.removeEventListener('storage', handler)
-  }
+  return getAdapter().subscribe(cb)
 }
 
-export function updateSchoolName(name: string) {
-  const data = load()
-  data.school.name = name.trim() || data.school.name
-  save(data)
+export async function readyStorage() {
+  return getAdapter().ready()
 }
 
-export function createClass(name: string, schoolYear: string): ClassRoom {
-  const data = load()
-  const room: ClassRoom = {
-    id: uid('class'),
-    schoolId: data.school.id,
-    name: name.trim(),
-    schoolYear: schoolYear.trim() || new Date().getFullYear().toString(),
-    createdAt: new Date().toISOString(),
-  }
-  data.classes.unshift(room)
-  save(data)
-  return room
+export async function updateSchoolName(name: string) {
+  return getAdapter().updateSchoolName(name)
 }
 
-export function deleteClass(classId: string) {
-  const data = load()
-  data.classes = data.classes.filter((c) => c.id !== classId)
-  data.students = data.students.filter((s) => s.classId !== classId)
-  const assignmentIds = new Set(
-    data.assignments.filter((a) => a.classId === classId).map((a) => a.id),
-  )
-  data.assignments = data.assignments.filter((a) => a.classId !== classId)
-  data.submissions = data.submissions.filter(
-    (s) => !assignmentIds.has(s.assignmentId),
-  )
-  data.scanSessions = data.scanSessions.filter(
-    (s) => !assignmentIds.has(s.assignmentId),
-  )
-  save(data)
+export async function createClass(name: string, schoolYear: string) {
+  return getAdapter().createClass(name, schoolYear)
+}
+
+export async function deleteClass(classId: string) {
+  return getAdapter().deleteClass(classId)
 }
 
 export function getClass(classId: string) {
-  return load().classes.find((c) => c.id === classId)
+  return getAdapter().getClass(classId)
 }
 
 export function getStudents(classId: string) {
-  return load()
-    .students.filter((s) => s.classId === classId)
-    .sort((a, b) => a.markerId - b.markerId)
+  return getAdapter().getStudents(classId)
 }
 
-function normalizeStudentNo(studentNo: string) {
-  return studentNo.trim()
-}
-
-/** Returns the conflicting student if 學號 already exists in the class. */
 export function findStudentNoConflict(
   classId: string,
   studentNo: string,
   excludeStudentId?: string,
 ) {
-  const normalized = normalizeStudentNo(studentNo)
-  if (!normalized) return null
-  return (
-    load().students.find(
-      (s) =>
-        s.classId === classId &&
-        s.id !== excludeStudentId &&
-        normalizeStudentNo(s.studentNo) === normalized,
-    ) ?? null
+  return getAdapter().findStudentNoConflict(
+    classId,
+    studentNo,
+    excludeStudentId,
   )
 }
 
-export function importStudents(
+export async function importStudents(
   classId: string,
   rows: { studentNo: string; name: string }[],
-): Student[] {
-  if (!classId) throw new Error('缺少班別 ID')
-  const cleaned = rows
-    .map((row) => ({
-      studentNo: normalizeStudentNo(String(row.studentNo ?? '')),
-      name: String(row.name ?? '').trim(),
-    }))
-    .filter((row) => row.studentNo && row.name)
-  if (!cleaned.length) throw new Error('沒有有效的學生列')
-
-  const seen = new Set<string>()
-  for (const row of cleaned) {
-    if (seen.has(row.studentNo)) {
-      throw new Error(`學號「${row.studentNo}」重複，請修改後再匯入`)
-    }
-    seen.add(row.studentNo)
-  }
-
-  const data = load()
-  data.students = data.students.filter((s) => s.classId !== classId)
-  const created: Student[] = cleaned.slice(0, 50).map((row, index) => ({
-    id: uid('stu'),
-    classId,
-    studentNo: row.studentNo,
-    name: row.name,
-    markerId: index,
-  }))
-  data.students.push(...created)
-  save(data)
-  return created
+) {
+  return getAdapter().importStudents(classId, rows)
 }
 
-export function addStudent(
+export async function addStudent(
   classId: string,
   studentNo: string,
   name: string,
-): Student {
-  const data = load()
-  const existing = data.students.filter((s) => s.classId === classId)
-  if (existing.length >= 50) throw new Error('每班最多 50 人')
-  const no = normalizeStudentNo(studentNo)
-  if (!no) throw new Error('請填寫學號')
-  if (existing.some((s) => normalizeStudentNo(s.studentNo) === no)) {
-    throw new Error(`學號「${no}」已存在，請使用其他學號`)
-  }
-  const used = new Set(existing.map((s) => s.markerId))
-  let markerId = 0
-  while (used.has(markerId) && markerId < 50) markerId += 1
-  const student: Student = {
-    id: uid('stu'),
-    classId,
-    studentNo: no,
-    name: name.trim(),
-    markerId,
-  }
-  data.students.push(student)
-  save(data)
-  return student
+): Promise<Student> {
+  return getAdapter().addStudent(classId, studentNo, name)
 }
 
-export function updateStudent(
+export async function updateStudent(
   studentId: string,
   patch: { studentNo?: string; name?: string },
 ) {
-  const data = load()
-  const student = data.students.find((s) => s.id === studentId)
-  if (!student) throw new Error('找不到學生')
-  if (patch.studentNo !== undefined) {
-    const no = normalizeStudentNo(patch.studentNo)
-    if (!no) throw new Error('學號不能留空')
-    const conflict = data.students.find(
-      (s) =>
-        s.classId === student.classId &&
-        s.id !== studentId &&
-        normalizeStudentNo(s.studentNo) === no,
-    )
-    if (conflict) {
-      throw new Error(`學號「${no}」已存在（${conflict.name}），請使用其他學號`)
-    }
-    student.studentNo = no
-  }
-  if (patch.name !== undefined) student.name = patch.name.trim()
-  save(data)
-  return student
+  return getAdapter().updateStudent(studentId, patch)
 }
 
-export function removeStudent(studentId: string) {
-  const data = load()
-  data.students = data.students.filter((s) => s.id !== studentId)
-  data.submissions = data.submissions.filter((s) => s.studentId !== studentId)
-  save(data)
+export async function removeStudent(studentId: string) {
+  return getAdapter().removeStudent(studentId)
 }
 
-export function reassignMarkerIds(classId: string) {
-  const data = load()
-  const list = data.students
-    .filter((s) => s.classId === classId)
-    .sort((a, b) => {
-      const na = Number(a.studentNo)
-      const nb = Number(b.studentNo)
-      if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) return na - nb
-      return a.studentNo.localeCompare(b.studentNo, 'zh-Hant')
-    })
-  list.forEach((s, index) => {
-    s.markerId = index
-  })
-  save(data)
+export async function reassignMarkerIds(classId: string) {
+  return getAdapter().reassignMarkerIds(classId)
 }
 
-export function createAssignment(
+export async function createAssignment(
   classId: string,
   title: string,
   subject: string,
   dueDate: string,
-): Assignment {
-  const data = load()
-  const assignment: Assignment = {
-    id: uid('asg'),
-    classId,
-    title: title.trim(),
-    subject: subject.trim() || '一般',
-    dueDate: dueDate || new Date().toISOString().slice(0, 10),
-    createdAt: new Date().toISOString(),
-  }
-  data.assignments.unshift(assignment)
-  save(data)
-  return assignment
+): Promise<Assignment> {
+  return getAdapter().createAssignment(classId, title, subject, dueDate)
 }
 
-export function deleteAssignment(assignmentId: string) {
-  const data = load()
-  const existed = data.assignments.some((a) => a.id === assignmentId)
-  if (!existed) throw new Error('找不到該功課紀錄')
-  data.assignments = data.assignments.filter((a) => a.id !== assignmentId)
-  data.submissions = data.submissions.filter(
-    (s) => s.assignmentId !== assignmentId,
-  )
-  data.scanSessions = data.scanSessions.filter(
-    (s) => s.assignmentId !== assignmentId,
-  )
-  save(data)
+export async function deleteAssignment(assignmentId: string) {
+  return getAdapter().deleteAssignment(assignmentId)
 }
 
 export function getAssignments(classId?: string) {
-  const list = load().assignments
-  return classId ? list.filter((a) => a.classId === classId) : list
+  return getAdapter().getAssignments(classId)
 }
 
 export function getAssignment(assignmentId: string) {
-  return load().assignments.find((a) => a.id === assignmentId)
+  return getAdapter().getAssignment(assignmentId)
 }
 
-export function saveScanResult(input: {
+export async function saveScanResult(input: {
   assignmentId: string
   detectedIds: number[]
   statuses: Record<string, SubmissionStatus>
   imageWidth?: number
   imageHeight?: number
   elapsedMs?: number
-}) {
-  const data = load()
-  const students = data.students
-  const now = new Date().toISOString()
-
-  const session: ScanSession = {
-    id: uid('scan'),
-    assignmentId: input.assignmentId,
-    detectedIds: [...input.detectedIds].sort((a, b) => a - b),
-    imageWidth: input.imageWidth,
-    imageHeight: input.imageHeight,
-    elapsedMs: input.elapsedMs,
-    createdAt: now,
-  }
-  data.scanSessions.unshift(session)
-
-  data.submissions = data.submissions.filter(
-    (s) => s.assignmentId !== input.assignmentId,
-  )
-
-  const assignment = data.assignments.find((a) => a.id === input.assignmentId)
-  if (!assignment) {
-    save(data)
-    return session
-  }
-
-  const classStudents = students.filter((s) => s.classId === assignment.classId)
-  for (const student of classStudents) {
-    const status = input.statuses[student.id] ?? 'missing'
-    data.submissions.push({
-      id: uid('sub'),
-      assignmentId: input.assignmentId,
-      studentId: student.id,
-      status,
-      detectedAt: status === 'submitted' ? now : null,
-      updatedAt: now,
-    })
-  }
-
-  save(data)
-  return session
+}): Promise<ScanSession> {
+  return getAdapter().saveScanResult(input)
 }
 
 export function getSubmissions(assignmentId: string) {
-  return load().submissions.filter((s) => s.assignmentId === assignmentId)
+  return getAdapter().getSubmissions(assignmentId)
 }
 
 export function getStudentMissingCounts(classId: string) {
-  const data = load()
-  const studentIds = new Set(
-    data.students.filter((s) => s.classId === classId).map((s) => s.id),
-  )
-  const assignmentIds = new Set(
-    data.assignments.filter((a) => a.classId === classId).map((a) => a.id),
-  )
-  const counts = new Map<string, number>()
-  for (const sub of data.submissions) {
-    if (!assignmentIds.has(sub.assignmentId) || !studentIds.has(sub.studentId)) {
-      continue
-    }
-    if (sub.status === 'missing') {
-      counts.set(sub.studentId, (counts.get(sub.studentId) ?? 0) + 1)
-    }
-  }
-  return counts
+  return getAdapter().getStudentMissingCounts(classId)
+}
+
+export async function exportWorkspaceJson() {
+  return getAdapter().exportJson()
+}
+
+export async function importWorkspaceJson(json: string) {
+  return getAdapter().importJson(json)
 }
 
 export function parseStudentCsv(text: string): { studentNo: string; name: string }[] {
@@ -371,13 +139,11 @@ export function parseStudentCsv(text: string): { studentNo: string; name: string
     .filter(Boolean)
   const rows: { studentNo: string; name: string }[] = []
   for (const line of lines) {
-    // Skip header rows only (avoid matching student numbers like "no.3")
     if (/^(學號|姓名|student\s*(no|id|number)?|name)\b/i.test(line)) continue
     if (/^marker/i.test(line)) continue
 
     let parts = line.split(/[,，\t|;；]/).map((p) => p.trim()).filter(Boolean)
     if (parts.length < 2) {
-      // Fallback: "1 陳大文" or "1　陳大文"
       parts = line.split(/[\s\u3000]+/).map((p) => p.trim()).filter(Boolean)
     }
     if (parts.length < 2) continue
@@ -387,7 +153,7 @@ export function parseStudentCsv(text: string): { studentNo: string; name: string
 }
 
 export function exportSubmissionsCsv(assignmentId: string): string {
-  const data = load()
+  const data = getData()
   const assignment = data.assignments.find((a) => a.id === assignmentId)
   if (!assignment) return ''
   const students = data.students
@@ -405,3 +171,5 @@ export function exportSubmissionsCsv(assignmentId: string): string {
   }
   return lines.join('\n')
 }
+
+export type { ClassRoom }
