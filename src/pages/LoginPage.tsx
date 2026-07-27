@@ -17,6 +17,8 @@ export function LoginPage() {
   const driver = getStorageDriver()
   const fileRef = useRef<HTMLInputElement>(null)
   const [email, setEmail] = useState('')
+  const [otp, setOtp] = useState('')
+  const [otpSent, setOtpSent] = useState(false)
   const [msg, setMsg] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -55,7 +57,7 @@ export function LoginPage() {
     setErr(text)
   }
 
-  async function onSubmit(e: FormEvent) {
+  async function onSendCode(e: FormEvent) {
     e.preventDefault()
     if (!supabase) {
       showError(
@@ -67,14 +69,45 @@ export function LoginPage() {
     setMsg('')
     setErr('')
     const { error } = await supabase.auth.signInWithOtp({
-      email,
+      email: email.trim(),
       options: {
+        // Still set redirect for users who click the link; primary flow is OTP in-app.
         emailRedirectTo: `${window.location.origin}${import.meta.env.BASE_URL}login`,
       },
     })
     setBusy(false)
     if (error) showError(error.message)
-    else showOk('已寄出登入連結，請檢查電郵。')
+    else {
+      setOtpSent(true)
+      setOtp('')
+      showOk('已寄出 6 位數驗證碼，請查看電郵後在下方輸入（不用點連結）。')
+    }
+  }
+
+  async function onVerifyCode(e: FormEvent) {
+    e.preventDefault()
+    if (!supabase) return
+    const token = otp.replace(/\s/g, '')
+    if (!/^\d{6}$/.test(token)) {
+      showError('請輸入電郵內的 6 位數字驗證碼')
+      return
+    }
+    setBusy(true)
+    setMsg('')
+    setErr('')
+    const { error } = await supabase.auth.verifyOtp({
+      email: email.trim(),
+      token,
+      type: 'email',
+    })
+    setBusy(false)
+    if (error) showError(error.message)
+    else {
+      setOtpSent(false)
+      setOtp('')
+      showOk('登入成功')
+      await readyStorage().catch(() => undefined)
+    }
   }
 
   async function onSignOut() {
@@ -274,7 +307,7 @@ export function LoginPage() {
       </section>
 
       <section className="panel p-6">
-        <h2 className="text-lg font-bold">雲端登入（Magic Link）</h2>
+        <h2 className="text-lg font-bold">雲端登入（電郵驗證碼）</h2>
         {!supabaseConfigured ? (
           <p className="mt-2 text-sm text-[var(--muted)]">
             尚未設定 Supabase。在 `.env` 填入 `VITE_SUPABASE_URL`、
@@ -298,18 +331,22 @@ export function LoginPage() {
         ) : (
           <>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              登入後會自動建立學校工作區（RLS 按學校隔離）。建議流程：本機匯出 →
-              登入 → 匯入雲端。
+              iPhone 請用主畫面 App 完成登入：先寄驗證碼，再到電郵抄 6
+              位數字回來輸入（不要點電郵裡的連結，以免開到 Chrome）。
             </p>
-            <form onSubmit={onSubmit} className="mt-4 space-y-3">
+            <form onSubmit={onSendCode} className="mt-4 space-y-3">
               <div className="field">
                 <label>電郵</label>
                 <input
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value)
+                    setOtpSent(false)
+                  }}
                   placeholder="teacher@school.edu.hk"
+                  autoComplete="email"
                 />
               </div>
               <button
@@ -317,9 +354,49 @@ export function LoginPage() {
                 className="btn btn-primary w-full"
                 disabled={busy}
               >
-                {busy ? '傳送中…' : '寄送 Magic Link'}
+                {busy && !otpSent ? '傳送中…' : '寄送驗證碼'}
               </button>
             </form>
+            {otpSent && (
+              <form onSubmit={onVerifyCode} className="mt-4 space-y-3">
+                <div className="field">
+                  <label>6 位數驗證碼</label>
+                  <input
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    required
+                    value={otp}
+                    onChange={(e) =>
+                      setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))
+                    }
+                    placeholder="123456"
+                    className="font-mono tracking-widest text-center text-xl"
+                    autoComplete="one-time-code"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="btn btn-secondary w-full"
+                  disabled={busy || otp.length !== 6}
+                >
+                  {busy ? '驗證中…' : '確認登入'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost w-full"
+                  disabled={busy}
+                  onClick={() => {
+                    setOtpSent(false)
+                    setOtp('')
+                    setMsg('')
+                    setErr('')
+                  }}
+                >
+                  重新輸入電郵
+                </button>
+              </form>
+            )}
           </>
         )}
         {msg && (

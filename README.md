@@ -63,8 +63,20 @@ npm run build:all
 2. 在 [supabase.com](https://supabase.com) 建專案
 3. SQL Editor 執行 [`supabase/schema.sql`](supabase/schema.sql)
 4. 複製 `.env.example` 為 `.env`，填入 URL / anon key，設 `VITE_STORAGE_DRIVER=supabase`
-5. Authentication → 啟用 Email Magic Link，並啟用 **Anonymous sign-ins**（學生認領用）
+5. Authentication → 啟用 Email；電郵範本 **Magic Link** 請改成寄出 6 位數碼（見下方）
 6. 重新部署後到「設定」登入 → 建立或加入學校 → **匯入 JSON**
+
+#### 電郵範本（必改，否則收不到 6 位數碼）
+
+Dashboard → **Authentication → Email Templates → Magic Link**，內文改成例如：
+
+```html
+<h2>登入驗證碼</h2>
+<p>請在 App 內輸入此 6 位數碼（不用點連結）：</p>
+<p style="font-size:24px;letter-spacing:4px"><strong>{{ .Token }}</strong></p>
+```
+
+老師在主畫面 App 輸入電郵 → 寄送驗證碼 → 抄電郵裡的數字回來確認登入。
 
 前端只使用 anon key；勿把 service role 放進前端。掃描相片只在手機本機分析，雲端只存結果（欠交狀態、detected IDs）。
 
