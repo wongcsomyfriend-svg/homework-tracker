@@ -11,6 +11,7 @@ import {
   isPushSupported,
   listReminderRules,
   setReminderEnabled,
+  syncPushIfGranted,
   type ReminderRule,
 } from '../../lib/push'
 
@@ -34,9 +35,15 @@ export function StudentRemindersPage() {
   }
 
   useEffect(() => {
-    void refresh().catch((error) =>
-      setErr(error instanceof Error ? error.message : '載入失敗'),
-    )
+    void (async () => {
+      try {
+        await refresh()
+        await syncPushIfGranted().catch(() => undefined)
+        setPermission(await getNotificationPermission())
+      } catch (error) {
+        setErr(error instanceof Error ? error.message : '載入失敗')
+      }
+    })()
   }, [cloud])
 
   async function onEnablePush() {
@@ -71,6 +78,27 @@ export function StudentRemindersPage() {
     setBusy(true)
     setErr('')
     try {
+      if (isPushSupported() && hasVapidKey()) {
+        try {
+          await enablePush()
+          setPermission('granted')
+        } catch (pushError) {
+          const pushMsg =
+            pushError instanceof Error ? pushError.message : '無法開啟推送'
+          await createReminderRule({
+            weekday,
+            timeOfDay,
+            label: label || `每週${WEEKDAYS[weekday]} ${timeOfDay} 欠交提醒`,
+            classId: null,
+          })
+          setLabel('')
+          await refresh()
+          setMsg('已新增提醒')
+          setErr(`提醒已儲存，但推送未開啟：${pushMsg}。請按「開啟推送」或允許通知。`)
+          return
+        }
+      }
+
       await createReminderRule({
         weekday,
         timeOfDay,
@@ -79,7 +107,7 @@ export function StudentRemindersPage() {
       })
       setLabel('')
       await refresh()
-      setMsg('已新增提醒')
+      setMsg('已新增提醒，並已開啟此裝置推送')
     } catch (error) {
       setErr(error instanceof Error ? error.message : '新增失敗')
     } finally {
@@ -104,7 +132,8 @@ export function StudentRemindersPage() {
       <section className="panel p-5">
         <h1 className="text-2xl font-bold">提醒設定</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          設定每週固定時間提醒自己尚欠交的功課。iOS 需先「加入主畫面」才可收到通知。
+          設定每週固定時間提醒自己尚欠交的功課。新增提醒時會自動請求開啟推送（iOS
+          需用主畫面 App）。也可手動按下方按鈕。
         </p>
         <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-950">
           <p className="font-semibold">為什麼沒有像 WhatsApp 那樣響、立刻彈？</p>

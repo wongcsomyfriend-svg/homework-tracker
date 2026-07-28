@@ -68,6 +68,14 @@ export async function enablePush() {
   return true
 }
 
+/** Re-register if permission already granted (no prompt). Safe to call on page load. */
+export async function syncPushIfGranted() {
+  if (!isPushSupported() || !hasVapidKey() || !supabase) return false
+  if (Notification.permission !== 'granted') return false
+  await enablePush()
+  return true
+}
+
 export async function disablePush() {
   if (!supabase) return
   const registration = await navigator.serviceWorker.ready
