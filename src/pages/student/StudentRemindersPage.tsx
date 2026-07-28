@@ -135,17 +135,6 @@ export function StudentRemindersPage() {
           設定每週固定時間提醒自己尚欠交的功課。新增提醒時會自動請求開啟推送（iOS
           需用主畫面 App）。也可手動按下方按鈕。
         </p>
-        <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-950">
-          <p className="font-semibold">為什麼沒有像 WhatsApp 那樣響、立刻彈？</p>
-          <p className="mt-1">
-            WhatsApp 是 App Store 原生 App。網頁 App 做不到同等級響鈴／即時彈出（Apple 限制）。
-          </p>
-          <ol className="mt-2 list-decimal space-y-1 pl-5">
-            <li>設定 → 通知 →「我的功課」</li>
-            <li>鎖定畫面、通知中心、橫幅全開；橫幅選「持續」；聲音開</li>
-            <li>關閉「預排摘要」；側邊靜音關掉；專注模式關掉或允許此 App</li>
-          </ol>
-        </div>
         {!isPushSupported() && (
           <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">
             此瀏覽器不支援 Web Push。
