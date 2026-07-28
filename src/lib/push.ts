@@ -36,6 +36,16 @@ export function isPushSupported() {
   )
 }
 
+/** True when launched from Home Screen (standalone), not Safari/Chrome tab. */
+export function isInstalledPwa() {
+  if (typeof window === 'undefined') return false
+  const mq = window.matchMedia('(display-mode: standalone)').matches
+  const iosStandalone =
+    'standalone' in navigator &&
+    Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
+  return mq || iosStandalone
+}
+
 export function hasVapidKey() {
   return Boolean(VAPID_PUBLIC_KEY)
 }
@@ -45,36 +55,48 @@ export async function getNotificationPermission(): Promise<NotificationPermissio
   return Notification.permission
 }
 
+function swNotReadyMessage() {
+  if (!isInstalledPwa()) {
+    return '請先用 Safari「分享 → 加入主畫面」，再從主畫面圖示開啟（不要用瀏覽器分頁）。iPhone／iPad 都適用，需 iPadOS／iOS 16.4 或更新。'
+  }
+  return 'Service Worker 尚未就緒。請完全關掉 App，刪除主畫面捷徑後重新「加入主畫面」，再開啟一次。'
+}
+
 async function getServiceWorkerRegistration(): Promise<ServiceWorkerRegistration> {
   if (!('serviceWorker' in navigator)) {
     throw new Error('此裝置不支援 Service Worker')
   }
 
-  const existing = await navigator.serviceWorker.getRegistration()
+  const scope = import.meta.env.BASE_URL
+  const swUrl = `${scope}sw.js`.replace(/\/{2,}/g, '/').replace(':/', '://')
+
+  const existing =
+    (await navigator.serviceWorker.getRegistration(scope)) ||
+    (await navigator.serviceWorker.getRegistration())
+
+  if (existing?.active) return existing
+
   if (existing) {
-    return withTimeout(
-      navigator.serviceWorker.ready,
-      10000,
-      'Service Worker 尚未就緒。請關閉 App 後從主畫面重新開啟。',
-    )
+    return withTimeout(navigator.serviceWorker.ready, 10000, swNotReadyMessage())
   }
 
-  const swUrl = `${import.meta.env.BASE_URL}sw.js`
-  await withTimeout(
-    navigator.serviceWorker.register(swUrl),
-    10000,
-    'Service Worker 註冊逾時。請關閉 App 後從主畫面重新開啟。',
-  )
-  return withTimeout(
-    navigator.serviceWorker.ready,
-    10000,
-    'Service Worker 尚未就緒。請關閉 App 後從主畫面重新開啟。',
-  )
+  try {
+    await withTimeout(
+      navigator.serviceWorker.register(swUrl, { scope }),
+      10000,
+      swNotReadyMessage(),
+    )
+  } catch {
+    throw new Error(swNotReadyMessage())
+  }
+
+  return withTimeout(navigator.serviceWorker.ready, 10000, swNotReadyMessage())
 }
 
 export async function enablePush() {
   if (!supabase) throw new Error('此功能需要雲端模式')
-  if (!isPushSupported()) throw new Error('此裝置不支援推送通知')
+  if (!isInstalledPwa()) throw new Error(swNotReadyMessage())
+  if (!isPushSupported()) throw new Error('此裝置不支援推送通知（需 iOS／iPadOS 16.4+）')
   if (!VAPID_PUBLIC_KEY) throw new Error('尚未設定 VITE_VAPID_PUBLIC_KEY')
 
   const permission = await Notification.requestPermission()

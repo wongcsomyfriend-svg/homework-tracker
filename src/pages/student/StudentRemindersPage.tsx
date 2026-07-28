@@ -9,6 +9,7 @@ import {
   enablePush,
   getNotificationPermission,
   hasVapidKey,
+  isInstalledPwa,
   isPushSupported,
   listReminderRules,
   setReminderEnabled,
@@ -132,12 +133,18 @@ export function StudentRemindersPage() {
       <section className="panel p-5">
         <h1 className="text-2xl font-bold">提醒設定</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          設定每週固定時間提醒自己尚欠交的功課。新增提醒時會一併嘗試開啟推送（iOS
-          需用主畫面 App）。
+          設定每週固定時間提醒自己尚欠交的功課。新增提醒時會一併嘗試開啟推送。
         </p>
+        {!isInstalledPwa() && (
+          <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            偵測到你正在瀏覽器分頁開啟。iPhone／iPad 推送必須：Safari → 分享 →
+            加入主畫面 → 從主畫面圖示開啟（需 iOS／iPadOS 16.4+）。學校共用
+            iPad（Shared iPad）可能不支援加入主畫面。
+          </p>
+        )}
         {!isPushSupported() && (
           <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            此瀏覽器不支援 Web Push。請用 Safari「加入主畫面」後再開啟。
+            此環境不支援 Web Push。請確認系統版本 ≥ 16.4，並從主畫面 App 開啟。
           </p>
         )}
         {!hasVapidKey() && (
