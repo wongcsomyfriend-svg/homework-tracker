@@ -80,30 +80,8 @@ export function RemindersPage() {
     e.preventDefault()
     setBusy(true)
     setErr('')
+    setMsg('')
     try {
-      // New reminder counts as a user gesture → request push permission automatically.
-      if (isPushSupported() && hasVapidKey()) {
-        try {
-          await enablePush()
-          setPermission('granted')
-        } catch (pushError) {
-          // Still save the rule; warn that notifications won't arrive.
-          const pushMsg =
-            pushError instanceof Error ? pushError.message : '無法開啟推送'
-          await createReminderRule({
-            weekday,
-            timeOfDay,
-            label: label || `每週${WEEKDAYS[weekday]} ${timeOfDay}`,
-            classId: classId || null,
-          })
-          setLabel('')
-          await refresh()
-          setMsg('已新增提醒')
-          setErr(`提醒已儲存，但推送未開啟：${pushMsg}。請按「開啟推送」或允許通知。`)
-          return
-        }
-      }
-
       await createReminderRule({
         weekday,
         timeOfDay,
@@ -112,7 +90,19 @@ export function RemindersPage() {
       })
       setLabel('')
       await refresh()
-      setMsg('已新增提醒，並已開啟此裝置推送')
+      setMsg('已新增提醒')
+
+      if (isPushSupported() && hasVapidKey()) {
+        try {
+          await enablePush()
+          setPermission('granted')
+          setMsg('已新增提醒，並已開啟此裝置推送')
+        } catch (pushError) {
+          const pushMsg =
+            pushError instanceof Error ? pushError.message : '無法開啟推送'
+          setErr(`提醒已儲存，但推送未開啟：${pushMsg}`)
+        }
+      }
     } catch (error) {
       setErr(error instanceof Error ? error.message : '新增失敗')
     } finally {

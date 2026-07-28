@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { isCloudMode } from '../../lib/cloud'
+import { ensureAnonymousSession } from '../../lib/studentApi'
 import {
   createReminderRule,
   deleteReminderRule,
@@ -30,6 +31,7 @@ export function StudentRemindersPage() {
 
   async function refresh() {
     if (!cloud) return
+    await ensureAnonymousSession()
     setRules(await listReminderRules())
     setPermission(await getNotificationPermission())
   }
@@ -51,6 +53,7 @@ export function StudentRemindersPage() {
     setErr('')
     setMsg('')
     try {
+      await ensureAnonymousSession()
       await enablePush()
       setPermission('granted')
       setMsg('已開啟推送通知')
@@ -63,6 +66,7 @@ export function StudentRemindersPage() {
 
   async function onDisablePush() {
     setBusy(true)
+    setErr('')
     try {
       await disablePush()
       setMsg('已關閉此裝置推送')
@@ -77,28 +81,10 @@ export function StudentRemindersPage() {
     e.preventDefault()
     setBusy(true)
     setErr('')
+    setMsg('')
     try {
-      if (isPushSupported() && hasVapidKey()) {
-        try {
-          await enablePush()
-          setPermission('granted')
-        } catch (pushError) {
-          const pushMsg =
-            pushError instanceof Error ? pushError.message : '無法開啟推送'
-          await createReminderRule({
-            weekday,
-            timeOfDay,
-            label: label || `每週${WEEKDAYS[weekday]} ${timeOfDay} 欠交提醒`,
-            classId: null,
-          })
-          setLabel('')
-          await refresh()
-          setMsg('已新增提醒')
-          setErr(`提醒已儲存，但推送未開啟：${pushMsg}。請按「開啟推送」或允許通知。`)
-          return
-        }
-      }
-
+      await ensureAnonymousSession()
+      // Save reminder first so push failures never block scheduling.
       await createReminderRule({
         weekday,
         timeOfDay,
@@ -107,7 +93,19 @@ export function StudentRemindersPage() {
       })
       setLabel('')
       await refresh()
-      setMsg('已新增提醒，並已開啟此裝置推送')
+      setMsg('已新增提醒')
+
+      if (isPushSupported() && hasVapidKey()) {
+        try {
+          await enablePush()
+          setPermission('granted')
+          setMsg('已新增提醒，並已開啟此裝置推送')
+        } catch (pushError) {
+          const pushMsg =
+            pushError instanceof Error ? pushError.message : '無法開啟推送'
+          setErr(`提醒已儲存，但推送未開啟：${pushMsg}`)
+        }
+      }
     } catch (error) {
       setErr(error instanceof Error ? error.message : '新增失敗')
     } finally {
@@ -127,17 +125,19 @@ export function StudentRemindersPage() {
     )
   }
 
+  const pushBlocked = !isPushSupported() || !hasVapidKey()
+
   return (
     <div className="space-y-4">
       <section className="panel p-5">
         <h1 className="text-2xl font-bold">提醒設定</h1>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          設定每週固定時間提醒自己尚欠交的功課。新增提醒時會自動請求開啟推送（iOS
-          需用主畫面 App）。也可手動按下方按鈕。
+          設定每週固定時間提醒自己尚欠交的功課。新增提醒時會一併嘗試開啟推送（iOS
+          需用主畫面 App）。
         </p>
         {!isPushSupported() && (
           <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            此瀏覽器不支援 Web Push。
+            此瀏覽器不支援 Web Push。請用 Safari「加入主畫面」後再開啟。
           </p>
         )}
         {!hasVapidKey() && (
@@ -145,14 +145,22 @@ export function StudentRemindersPage() {
             尚未設定 VITE_VAPID_PUBLIC_KEY，無法註冊推送。
           </p>
         )}
+        {msg && (
+          <p className="mt-3 text-sm font-semibold text-[var(--accent)]">{msg}</p>
+        )}
+        {err && (
+          <p className="mt-3 rounded-xl bg-red-100 px-3 py-2 text-sm font-semibold text-red-700">
+            {err}
+          </p>
+        )}
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
             className="btn btn-primary"
-            disabled={busy || !isPushSupported() || !hasVapidKey()}
+            disabled={busy || pushBlocked}
             onClick={() => void onEnablePush()}
           >
-            開啟推送（權限：{permission}）
+            {busy ? '處理中…' : `開啟推送（權限：${permission}）`}
           </button>
           <button
             type="button"
@@ -200,7 +208,7 @@ export function StudentRemindersPage() {
           </div>
           <div className="sm:col-span-2">
             <button type="submit" className="btn btn-secondary" disabled={busy}>
-              新增提醒
+              {busy ? '處理中…' : '新增提醒'}
             </button>
           </div>
         </form>
@@ -229,6 +237,7 @@ export function StudentRemindersPage() {
                 <button
                   type="button"
                   className="btn btn-ghost"
+                  disabled={busy}
                   onClick={() =>
                     void setReminderEnabled(r.id, !r.enabled)
                       .then(refresh)
@@ -242,6 +251,7 @@ export function StudentRemindersPage() {
                 <button
                   type="button"
                   className="btn btn-danger"
+                  disabled={busy}
                   onClick={() =>
                     void deleteReminderRule(r.id)
                       .then(refresh)
@@ -260,15 +270,6 @@ export function StudentRemindersPage() {
           )}
         </ul>
       </section>
-
-      {msg && (
-        <p className="text-sm font-semibold text-[var(--accent)]">{msg}</p>
-      )}
-      {err && (
-        <p className="rounded-xl bg-red-100 px-3 py-2 text-sm font-semibold text-red-700">
-          {err}
-        </p>
-      )}
     </div>
   )
 }

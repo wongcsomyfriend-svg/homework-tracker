@@ -11,6 +11,22 @@ function urlBase64ToUint8Array(base64String: string) {
   return output
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
+}
+
 export function isPushSupported() {
   return (
     typeof window !== 'undefined' &&
@@ -29,6 +45,33 @@ export async function getNotificationPermission(): Promise<NotificationPermissio
   return Notification.permission
 }
 
+async function getServiceWorkerRegistration(): Promise<ServiceWorkerRegistration> {
+  if (!('serviceWorker' in navigator)) {
+    throw new Error('此裝置不支援 Service Worker')
+  }
+
+  const existing = await navigator.serviceWorker.getRegistration()
+  if (existing) {
+    return withTimeout(
+      navigator.serviceWorker.ready,
+      10000,
+      'Service Worker 尚未就緒。請關閉 App 後從主畫面重新開啟。',
+    )
+  }
+
+  const swUrl = `${import.meta.env.BASE_URL}sw.js`
+  await withTimeout(
+    navigator.serviceWorker.register(swUrl),
+    10000,
+    'Service Worker 註冊逾時。請關閉 App 後從主畫面重新開啟。',
+  )
+  return withTimeout(
+    navigator.serviceWorker.ready,
+    10000,
+    'Service Worker 尚未就緒。請關閉 App 後從主畫面重新開啟。',
+  )
+}
+
 export async function enablePush() {
   if (!supabase) throw new Error('此功能需要雲端模式')
   if (!isPushSupported()) throw new Error('此裝置不支援推送通知')
@@ -37,7 +80,7 @@ export async function enablePush() {
   const permission = await Notification.requestPermission()
   if (permission !== 'granted') throw new Error('未允許通知權限')
 
-  const registration = await navigator.serviceWorker.ready
+  const registration = await getServiceWorkerRegistration()
   const existing = await registration.pushManager.getSubscription()
   const subscription =
     existing ??
@@ -52,7 +95,7 @@ export async function enablePush() {
   }
 
   const { data: auth } = await supabase.auth.getUser()
-  if (!auth.user) throw new Error('請先登入')
+  if (!auth.user) throw new Error('請先認領身份或登入')
 
   const { error } = await supabase.from('push_subscriptions').upsert(
     {
@@ -78,7 +121,8 @@ export async function syncPushIfGranted() {
 
 export async function disablePush() {
   if (!supabase) return
-  const registration = await navigator.serviceWorker.ready
+  const registration = await getServiceWorkerRegistration().catch(() => null)
+  if (!registration) return
   const subscription = await registration.pushManager.getSubscription()
   if (subscription) {
     const endpoint = subscription.endpoint
@@ -124,7 +168,7 @@ export async function createReminderRule(input: {
 }) {
   if (!supabase) throw new Error('此功能需要雲端模式')
   const { data: auth } = await supabase.auth.getUser()
-  if (!auth.user) throw new Error('請先登入')
+  if (!auth.user) throw new Error('請先認領身份或登入')
   const { error } = await supabase.from('reminder_rules').insert({
     user_id: auth.user.id,
     weekday: input.weekday,
