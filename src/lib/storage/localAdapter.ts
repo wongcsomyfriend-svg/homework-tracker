@@ -290,6 +290,9 @@ export function createLocalAdapter(): StorageAdapter {
           return a.studentNo.localeCompare(b.studentNo, 'zh-Hant')
         })
       list.forEach((s, index) => {
+        s.markerId = 1000 + index
+      })
+      list.forEach((s, index) => {
         s.markerId = index
       })
       save(data)

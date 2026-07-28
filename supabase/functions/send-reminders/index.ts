@@ -100,8 +100,8 @@ Deno.serve(async (req) => {
       }
       const target = ruleMinutes(String(rule.time_of_day))
       const diff = local.minutes - target
-      // Match if within the last 5 minutes window
-      if (diff < 0 || diff >= 5) {
+      // Exact minute match (cron runs every minute)
+      if (diff !== 0) {
         skipped += 1
         continue
       }
@@ -217,7 +217,12 @@ Deno.serve(async (req) => {
                 auth: sub.auth_key as string,
               },
             },
-            JSON.stringify({ title, body, url }),
+            JSON.stringify({
+              title,
+              body,
+              url,
+              tag: `reminder-${rule.id}`,
+            }),
           )
           ok = true
         } catch (err) {

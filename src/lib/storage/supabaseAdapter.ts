@@ -463,34 +463,39 @@ export function createSupabaseAdapter(client: SupabaseClient): StorageAdapter {
     async addStudent(classId, studentNo, name) {
       await this.ready()
       await requireSession()
-      const existing = cache.students.filter((s) => s.classId === classId)
-      if (existing.length >= 50) throw new Error('每班最多 50 人')
       const no = normalizeStudentNo(studentNo)
       if (!no) throw new Error('請填寫學號')
-      if (existing.some((s) => normalizeStudentNo(s.studentNo) === no)) {
-        throw new Error(`學號「${no}」已存在，請使用其他學號`)
-      }
-      const used = new Set(existing.map((s) => s.markerId))
-      let markerId = 0
-      while (used.has(markerId) && markerId < 50) markerId += 1
+      if (!name.trim()) throw new Error('請填寫姓名')
 
-      const { data, error } = await client
-        .from('students')
-        .insert({
-          class_id: classId,
-          student_no: no,
-          name: name.trim(),
-          marker_id: markerId,
-        })
-        .select('*')
-        .single()
+      const { data, error } = await client.rpc('add_student_to_class', {
+        p_class_id: classId,
+        p_student_no: no,
+        p_name: name.trim(),
+      })
       if (error) {
-        if (error.message?.includes('students_class_id_student_no_key')) {
-          throw new Error(`學號「${no}」已存在，請使用其他學號`)
+        const msg = error.message || ''
+        if (msg.includes('已存在') || msg.includes('students_class_id_student_no_key')) {
+          throw new Error(
+            msg.includes('已存在')
+              ? msg
+              : `學號「${no}」已存在，請使用其他學號`,
+          )
+        }
+        if (
+          msg.includes('每班最多') ||
+          msg.includes('students_class_id_marker_id_key')
+        ) {
+          throw new Error(
+            msg.includes('每班最多')
+              ? msg
+              : 'Marker 編號衝突，請再試一次或按「重排 Marker」',
+          )
         }
         dbError(error, '無法新增學生')
       }
-      const student = mapStudent(data as DbStudent)
+      const row = (Array.isArray(data) ? data[0] : data) as DbStudent | null
+      if (!row) throw new Error('無法新增學生')
+      const student = mapStudent(row)
       cache = { ...cache, students: [...cache.students, student] }
       notifyDataChanged()
       return student
@@ -552,21 +557,10 @@ export function createSupabaseAdapter(client: SupabaseClient): StorageAdapter {
     async reassignMarkerIds(classId) {
       await this.ready()
       await requireSession()
-      const list = cache.students
-        .filter((s) => s.classId === classId)
-        .sort((a, b) => {
-          const na = Number(a.studentNo)
-          const nb = Number(b.studentNo)
-          if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) return na - nb
-          return a.studentNo.localeCompare(b.studentNo, 'zh-Hant')
-        })
-      for (let i = 0; i < list.length; i++) {
-        const { error } = await client
-          .from('students')
-          .update({ marker_id: i })
-          .eq('id', list[i].id)
-        if (error) dbError(error, '無法重排 Marker ID')
-      }
+      const { error } = await client.rpc('reassign_class_markers', {
+        p_class_id: classId,
+      })
+      if (error) dbError(error, '無法重排 Marker ID')
       await refresh()
     },
 

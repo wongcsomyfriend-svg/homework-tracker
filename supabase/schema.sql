@@ -56,9 +56,25 @@ create table if not exists students (
   marker_id int not null check (marker_id >= 0 and marker_id < 50),
   claim_code text unique,
   claim_code_rotated_at timestamptz,
-  unique (class_id, marker_id),
   unique (class_id, student_no)
 );
+
+-- Unique marker per class; DEFERRABLE so reassignment can update in one transaction
+do $$
+begin
+  if exists (
+    select 1 from pg_constraint
+    where conname = 'students_class_id_marker_id_key'
+  ) then
+    alter table students drop constraint students_class_id_marker_id_key;
+  end if;
+  alter table students
+    add constraint students_class_id_marker_id_key
+    unique (class_id, marker_id)
+    deferrable initially deferred;
+exception
+  when duplicate_object then null;
+end $$;
 
 do $$
 begin
@@ -191,6 +207,69 @@ security definer
 set search_path = public
 as $$
   select student_id from student_links where user_id = auth.uid()
+$$;
+
+-- Bypass RLS when checking class membership (avoids classes <-> students policy recursion)
+create or replace function public.is_my_school_class(p_class_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from classes c
+    where c.id = p_class_id
+      and c.school_id = (select school_id from profiles where id = auth.uid())
+  )
+$$;
+
+create or replace function public.is_my_linked_class(p_class_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from students s
+    join student_links sl on sl.student_id = s.id
+    where s.class_id = p_class_id and sl.user_id = auth.uid()
+  )
+$$;
+
+create or replace function public.is_my_school_assignment(p_assignment_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from assignments a
+    join classes c on c.id = a.class_id
+    where a.id = p_assignment_id
+      and c.school_id = (select school_id from profiles where id = auth.uid())
+  )
+$$;
+
+create or replace function public.is_my_school_student(p_student_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from students s
+    join classes c on c.id = s.class_id
+    where s.id = p_student_id
+      and c.school_id = (select school_id from profiles where id = auth.uid())
+  )
 $$;
 
 -- Drop old auto-create school helper
@@ -437,6 +516,127 @@ begin
 end;
 $$;
 
+create or replace function public.reassign_class_markers(p_class_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  r record;
+  i int := 0;
+  v_school uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select school_id into v_school from profiles where id = auth.uid();
+  if v_school is null then
+    raise exception 'no school';
+  end if;
+
+  if not exists (
+    select 1 from classes c
+    where c.id = p_class_id and c.school_id = v_school
+  ) then
+    raise exception 'not allowed';
+  end if;
+
+  for r in
+    select id
+    from students
+    where class_id = p_class_id
+    order by
+      case when student_no ~ '^[0-9]+$' then student_no::int end nulls last,
+      student_no
+  loop
+    update students set marker_id = i where id = r.id;
+    i := i + 1;
+  end loop;
+
+  if i > 50 then
+    raise exception '每班最多 50 人';
+  end if;
+end;
+$$;
+
+-- Atomically pick the next free marker_id (avoids unique constraint races)
+create or replace function public.add_student_to_class(
+  p_class_id uuid,
+  p_student_no text,
+  p_name text
+)
+returns students
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_school uuid;
+  v_no text := trim(p_student_no);
+  v_name text := trim(p_name);
+  v_marker int;
+  v_row students;
+begin
+  if v_uid is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select school_id into v_school from profiles where id = v_uid;
+  if v_school is null then
+    raise exception 'no school';
+  end if;
+
+  if not exists (
+    select 1 from classes c
+    where c.id = p_class_id and c.school_id = v_school
+  ) then
+    raise exception 'not allowed';
+  end if;
+
+  if v_no is null or v_no = '' then
+    raise exception '請填寫學號';
+  end if;
+  if v_name is null or v_name = '' then
+    raise exception '請填寫姓名';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext(p_class_id::text));
+
+  if exists (
+    select 1 from students
+    where class_id = p_class_id and student_no = v_no
+  ) then
+    raise exception '學號「%」已存在，請使用其他學號', v_no;
+  end if;
+
+  if (select count(*) from students where class_id = p_class_id) >= 50 then
+    raise exception '每班最多 50 人';
+  end if;
+
+  select gs.n into v_marker
+  from generate_series(0, 49) as gs(n)
+  where not exists (
+    select 1 from students s
+    where s.class_id = p_class_id and s.marker_id = gs.n
+  )
+  order by gs.n
+  limit 1;
+
+  if v_marker is null then
+    raise exception '每班最多 50 人';
+  end if;
+
+  insert into students (class_id, student_no, name, marker_id)
+  values (p_class_id, v_no, v_name, v_marker)
+  returning * into v_row;
+
+  return v_row;
+end;
+$$;
+
 -- Auto-assign claim_code when teachers insert students
 create or replace function public.students_set_claim_code()
 returns trigger
@@ -463,6 +663,13 @@ grant execute on function public.claim_student(text) to authenticated;
 grant execute on function public.rotate_student_claim_code(uuid) to authenticated;
 grant execute on function public.unlink_student(uuid, uuid) to authenticated;
 grant execute on function public.my_student_ids() to authenticated;
+grant execute on function public.my_school_id() to authenticated;
+grant execute on function public.is_my_school_class(uuid) to authenticated;
+grant execute on function public.is_my_linked_class(uuid) to authenticated;
+grant execute on function public.is_my_school_assignment(uuid) to authenticated;
+grant execute on function public.is_my_school_student(uuid) to authenticated;
+grant execute on function public.reassign_class_markers(uuid) to authenticated;
+grant execute on function public.add_student_to_class(uuid, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- RLS
@@ -526,27 +733,12 @@ create policy "classes by school"
 
 create policy "classes read linked student"
   on classes for select
-  using (
-    id in (
-      select s.class_id from students s
-      where s.id in (select public.my_student_ids())
-    )
-  );
+  using (public.is_my_linked_class(id));
 
 create policy "students by school"
   on students for all
-  using (
-    exists (
-      select 1 from classes c
-      where c.id = students.class_id and c.school_id = public.my_school_id()
-    )
-  )
-  with check (
-    exists (
-      select 1 from classes c
-      where c.id = students.class_id and c.school_id = public.my_school_id()
-    )
-  );
+  using (public.is_my_school_class(class_id))
+  with check (public.is_my_school_class(class_id));
 
 create policy "students read linked"
   on students for select
@@ -554,46 +746,17 @@ create policy "students read linked"
 
 create policy "assignments by school"
   on assignments for all
-  using (
-    exists (
-      select 1 from classes c
-      where c.id = assignments.class_id and c.school_id = public.my_school_id()
-    )
-  )
-  with check (
-    exists (
-      select 1 from classes c
-      where c.id = assignments.class_id and c.school_id = public.my_school_id()
-    )
-  );
+  using (public.is_my_school_class(class_id))
+  with check (public.is_my_school_class(class_id));
 
 create policy "assignments read linked student"
   on assignments for select
-  using (
-    class_id in (
-      select s.class_id from students s
-      where s.id in (select public.my_student_ids())
-    )
-  );
+  using (public.is_my_linked_class(class_id));
 
 create policy "submissions by school"
   on submissions for all
-  using (
-    exists (
-      select 1
-      from assignments a
-      join classes c on c.id = a.class_id
-      where a.id = submissions.assignment_id and c.school_id = public.my_school_id()
-    )
-  )
-  with check (
-    exists (
-      select 1
-      from assignments a
-      join classes c on c.id = a.class_id
-      where a.id = submissions.assignment_id and c.school_id = public.my_school_id()
-    )
-  );
+  using (public.is_my_school_assignment(assignment_id))
+  with check (public.is_my_school_assignment(assignment_id));
 
 create policy "submissions read linked student"
   on submissions for select
@@ -601,33 +764,14 @@ create policy "submissions read linked student"
 
 create policy "scan_sessions by school"
   on scan_sessions for all
-  using (
-    exists (
-      select 1
-      from assignments a
-      join classes c on c.id = a.class_id
-      where a.id = scan_sessions.assignment_id and c.school_id = public.my_school_id()
-    )
-  )
-  with check (
-    exists (
-      select 1
-      from assignments a
-      join classes c on c.id = a.class_id
-      where a.id = scan_sessions.assignment_id and c.school_id = public.my_school_id()
-    )
-  );
+  using (public.is_my_school_assignment(assignment_id))
+  with check (public.is_my_school_assignment(assignment_id));
 
 create policy "student_links read own"
   on student_links for select
   using (
     user_id = auth.uid()
-    or exists (
-      select 1
-      from students s
-      join classes c on c.id = s.class_id
-      where s.id = student_links.student_id and c.school_id = public.my_school_id()
-    )
+    or public.is_my_school_student(student_id)
   );
 
 create policy "student_links delete own"
