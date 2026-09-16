@@ -122,8 +122,41 @@ function mapScan(row: DbScanSession): ScanSession {
   }
 }
 
-function dbError(err: { message?: string } | null, fallback: string) {
-  throw new Error(err?.message || fallback)
+function dbError(
+  err: { message?: string; details?: string; hint?: string; code?: string } | null,
+  fallback: string,
+) {
+  const parts = [err?.message, err?.details, err?.hint].filter(Boolean)
+  throw new Error(parts.join(' — ') || fallback)
+}
+
+function isMissingRpc(err: { message?: string; code?: string } | null) {
+  const msg = (err?.message || '').toLowerCase()
+  return (
+    err?.code === 'PGRST202' ||
+    msg.includes('could not find the function')
+  )
+}
+
+function translateStudentError(message: string, studentNo: string) {
+  const lower = message.toLowerCase()
+  if (message.includes('已存在') || lower.includes('students_class_id_student_no_key')) {
+    return message.includes('已存在')
+      ? message
+      : `學號「${studentNo}」已存在，請使用其他學號`
+  }
+  if (message.includes('每班最多') || lower.includes('students_class_id_marker_id_key')) {
+    return message.includes('每班最多')
+      ? message
+      : 'Marker 編號衝突，請再試一次或按「重排 Marker」'
+  }
+  if (lower.includes('not allowed') || message.includes('no school')) {
+    return '無法新增：你尚未加入此學校，或沒有權限管理這個班別'
+  }
+  if (lower.includes('not authenticated')) {
+    return '請先登入再新增學生'
+  }
+  return message
 }
 
 export function createSupabaseAdapter(client: SupabaseClient): StorageAdapter {
@@ -464,37 +497,64 @@ export function createSupabaseAdapter(client: SupabaseClient): StorageAdapter {
       await this.ready()
       await requireSession()
       const no = normalizeStudentNo(studentNo)
+      const trimmedName = name.trim()
       if (!no) throw new Error('請填寫學號')
-      if (!name.trim()) throw new Error('請填寫姓名')
+      if (!trimmedName) throw new Error('請填寫姓名')
+
+      async function insertDirect() {
+        const { data: existing, error: listError } = await client
+          .from('students')
+          .select('marker_id, student_no')
+          .eq('class_id', classId)
+        if (listError) dbError(listError, '無法讀取學生名單')
+        const rows = existing ?? []
+        if (rows.some((s) => normalizeStudentNo(s.student_no) === no)) {
+          throw new Error(`學號「${no}」已存在，請使用其他學號`)
+        }
+        if (rows.length >= 50) throw new Error('每班最多 50 人')
+        const used = new Set(rows.map((s) => s.marker_id))
+        let markerId = 0
+        while (used.has(markerId) && markerId < 50) markerId += 1
+        if (markerId >= 50) throw new Error('每班最多 50 人')
+
+        const { data, error } = await client
+          .from('students')
+          .insert({
+            class_id: classId,
+            student_no: no,
+            name: trimmedName,
+            marker_id: markerId,
+          })
+          .select('*')
+          .single()
+        if (error) {
+          throw new Error(
+            translateStudentError(error.message || '無法新增學生', no),
+          )
+        }
+        return data as DbStudent
+      }
 
       const { data, error } = await client.rpc('add_student_to_class', {
         p_class_id: classId,
         p_student_no: no,
-        p_name: name.trim(),
+        p_name: trimmedName,
       })
+
+      let row: DbStudent | null = null
       if (error) {
-        const msg = error.message || ''
-        if (msg.includes('已存在') || msg.includes('students_class_id_student_no_key')) {
+        if (isMissingRpc(error)) {
+          row = await insertDirect()
+        } else {
           throw new Error(
-            msg.includes('已存在')
-              ? msg
-              : `學號「${no}」已存在，請使用其他學號`,
+            translateStudentError(error.message || '無法新增學生', no),
           )
         }
-        if (
-          msg.includes('每班最多') ||
-          msg.includes('students_class_id_marker_id_key')
-        ) {
-          throw new Error(
-            msg.includes('每班最多')
-              ? msg
-              : 'Marker 編號衝突，請再試一次或按「重排 Marker」',
-          )
-        }
-        dbError(error, '無法新增學生')
+      } else {
+        row = (Array.isArray(data) ? data[0] : data) as DbStudent | null
+        if (!row) row = await insertDirect()
       }
-      const row = (Array.isArray(data) ? data[0] : data) as DbStudent | null
-      if (!row) throw new Error('無法新增學生')
+
       const student = mapStudent(row)
       cache = { ...cache, students: [...cache.students, student] }
       notifyDataChanged()
